@@ -1,4 +1,4 @@
-# LinuxDo to Obsidian V3.5.5
+# LinuxDo to Obsidian V3.5.6
 
 **劫持LinuxDo书签按钮**，一键保存帖子+评论到 **Obsidian** 或 **飞书多维表格**，支持双保存。
 
@@ -244,7 +244,7 @@ https://feishu.cn/base/XxXxXxXxXxXxXxXxXxXxXxXxXxX?table=tblXxXxXxXxXxXx&view=..
 来源: https://linux.do/t/topic/847468
 标题: 秘密花园园丁邀请函
 作者: Neo
-保存时间: 2026-03-11T05:00:00Z
+保存时间: 2026-03-11 19:38:14
 标签: [linuxdo]
 评论数: 100
 ---
@@ -353,6 +353,11 @@ linuxdo-to-obsidian/
 
 ## 更新日志
 
+### v3.5.6 (2026-03-11)
+
+- **优化**：保存时间改为北京时间格式（原为UTC时间）
+- **格式**：`2026-03-11 19:38:14`（更易读）
+
 ### v3.5.5 (2026-03-11)
 
 - **修复**：飞书记录重复问题 - 搜索逻辑从URL改为标题
@@ -431,4 +436,4 @@ MIT License
 
 ---
 
-**V3.5.5 - 修复飞书记录重复问题**
+**V3.5.6 - 保存时间改为北京时间格式**
