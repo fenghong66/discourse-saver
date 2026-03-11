@@ -1,10 +1,11 @@
-// LinuxDo to Obsidian - Content Script V3.5.4
+// LinuxDo to Obsidian - Content Script V3.5.5
 // 劫持书签按钮，保存帖子+评论到Obsidian（保留颜色样式）
 // V3.5: 支持同时保存到飞书多维表格（带MD附件）
 // V3.5.1: 单击保存到Obsidian，双击触发L站原生收藏
 // V3.5.2: 支持飞书国内版和Lark国际版
 // V3.5.3: 支持评论区书签按钮 - 点击评论书签保存主帖+该评论
 // V3.5.4: 修复双击检测竞态条件 + 改进原生收藏触发机制
+// V3.5.5: 修复飞书记录重复问题（搜索逻辑改进）
 //
 // 功能说明：
 // - 点击主帖书签：保存主帖（如开启"保存评论"则包含所有评论）
@@ -1154,7 +1155,7 @@
 
     pluginInitialized = true;
     currentTopicUrl = topicUrl;
-    console.log('[LinuxDo→Obsidian] 插件已加载 (V3.5.4 - 修复双击检测)');
+    console.log('[LinuxDo→Obsidian] 插件已加载 (V3.5.5 - 修复飞书重复记录)');
   }
 
   // 页面加载完成后初始化

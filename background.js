@@ -1,9 +1,10 @@
-// LinuxDo to Obsidian - Background Script V3.5.4
+// LinuxDo to Obsidian - Background Script V3.5.5
 // 处理飞书API请求（解决CORS问题）
 // V3.5: 支持上传MD文件作为附件
 // V3.5.2: 支持飞书国内版和Lark国际版
 // V3.5.3: 配合 content.js 支持评论书签功能
 // V3.5.4: 版本同步
+// V3.5.5: 修复飞书记录搜索 - 改用标题搜索（超链接字段contains不搜索URL）
 
 // API 域名映射
 const API_DOMAINS = {
@@ -195,9 +196,10 @@ async function saveToFeishu(config, postData) {
   return data.data.record;
 }
 
-// 检查飞书记录是否存在（通过URL查找）
-// V3.5.4: 改进匹配逻辑，先用 contains 搜索，再精确比对 URL
-async function findFeishuRecord(config, url) {
+// 检查飞书记录是否存在（通过标题搜索）
+// V3.5.5: 修复搜索逻辑 - 飞书超链接字段的contains搜索的是显示文本，不是URL
+// 改为按标题搜索，然后精确比对URL
+async function findFeishuRecord(config, url, title) {
   const { apiDomain, appId, appSecret, appToken, tableId } = config;
   const domain = apiDomain || 'feishu';
 
@@ -207,7 +209,12 @@ async function findFeishuRecord(config, url) {
   const baseUrl = getApiBaseUrl(domain);
   const apiUrl = `${baseUrl}/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records/search`;
 
-  // 先用 contains 搜索可能匹配的记录（最多10条）
+  // V3.5.5: 改为按标题搜索（因为超链接字段的contains搜索的是text，不是link）
+  // 提取基础标题（去掉楼层后缀如 " [2楼]"）
+  const baseTitle = title.replace(/\s*\[\d+楼\]$/, '');
+
+  console.log('[LinuxDo→飞书] 搜索标题:', baseTitle);
+
   const response = await fetch(apiUrl, {
     method: 'POST',
     headers: {
@@ -219,13 +226,13 @@ async function findFeishuRecord(config, url) {
         conjunction: 'and',
         conditions: [
           {
-            field_name: '链接',
+            field_name: '标题',
             operator: 'contains',
-            value: [url]
+            value: [baseTitle]
           }
         ]
       },
-      page_size: 10
+      page_size: 20
     })
   });
 
@@ -243,12 +250,16 @@ async function findFeishuRecord(config, url) {
     return null;
   }
 
-  // V3.5.4: 在结果中精确匹配 URL，避免 /t/xxx/123 误匹配 /t/xxx/123/2
+  // V3.5.5: 在结果中精确匹配 URL，确保找到正确的记录
   if (data.data.total > 0 && data.data.items) {
+    console.log('[LinuxDo→飞书] 找到', data.data.items.length, '条可能匹配的记录');
+
     for (const item of data.data.items) {
       const recordLink = item.fields?.['链接'];
       // 超链接字段格式: { link: "url", text: "title" } 或直接是字符串
       const recordUrl = typeof recordLink === 'object' ? recordLink.link : recordLink;
+
+      console.log('[LinuxDo→飞书] 比对URL:', recordUrl, 'vs', url);
 
       if (recordUrl === url) {
         console.log('[LinuxDo→飞书] 找到精确匹配的记录:', item.record_id);
@@ -323,13 +334,15 @@ async function updateFeishuRecord(config, recordId, postData) {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'saveToFeishu') {
     console.log('[LinuxDo→飞书] 收到保存请求');
+    console.log('[LinuxDo→飞书] 标题:', request.postData.title);
+    console.log('[LinuxDo→飞书] URL:', request.postData.url);
 
     (async () => {
       try {
         const { config, postData } = request;
 
-        // 先尝试查找是否已存在
-        const existingRecord = await findFeishuRecord(config, postData.url);
+        // V3.5.5: 传入标题用于搜索（因为飞书超链接字段的contains不搜索URL）
+        const existingRecord = await findFeishuRecord(config, postData.url, postData.title);
 
         let result;
         if (existingRecord) {
@@ -403,4 +416,4 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-console.log('[LinuxDo→Obsidian] Background script 已加载 (V3.5.4)');
+console.log('[LinuxDo→Obsidian] Background script 已加载 (V3.5.5)');
