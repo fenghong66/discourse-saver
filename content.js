@@ -1,4 +1,4 @@
-// LinuxDo to Obsidian - Content Script V3.5.7
+// LinuxDo to Obsidian - Content Script V3.5.8
 // 劫持链接按钮，保存帖子+评论到Obsidian（保留颜色样式）
 // V3.5: 支持同时保存到飞书多维表格（带MD附件）
 // V3.5.1: 单击保存到Obsidian，双击触发L站原生收藏
@@ -8,6 +8,7 @@
 // V3.5.5: 修复飞书记录重复问题（搜索逻辑改进）
 // V3.5.6: 保存时间改为北京时间格式
 // V3.5.7: 改为劫持链接按钮（原书签按钮改为链接按钮）
+// V3.5.8: 修复误触发问题 - 增加严格的区域检测，只拦截帖子操作菜单中的链接按钮
 //
 // 功能说明：
 // - 点击主帖链接按钮：保存主帖（如开启"保存评论"则包含所有评论）
@@ -49,32 +50,61 @@
 
   // 判断是否为帖子/评论区域的链接按钮，返回 { isLink: boolean, postNumber: string|null }
   // V3.5.7: 改为检测链接按钮（原书签按钮）
+  // V3.5.8: 修复误触发问题 - 增加严格的区域检测
   function isLinkButton(element) {
     if (!element) return { isLink: false, postNumber: null };
 
-    // 先检查元素特征是否像链接按钮
+    // 必须在帖子页面上
+    if (!isTopicPage()) {
+      return { isLink: false, postNumber: null };
+    }
+
+    // V3.5.7.1: 首先检查是否在帖子操作菜单区域内（严格检测）
+    // Discourse 的帖子操作按钮在这些区域内
+    const postMenuAreas = [
+      '.post-controls',      // 帖子控制区
+      '.post-menu-area',     // 帖子菜单区
+      '.post-actions',       // 帖子操作区
+      '.widget-button',      // 小部件按钮
+      '.more-actions',       // 更多操作菜单
+      '.topic-map',          // 话题地图
+      '.post-admin-menu'     // 管理菜单
+    ];
+
+    let isInPostMenu = false;
+    for (const selector of postMenuAreas) {
+      if (element.closest(selector)) {
+        isInPostMenu = true;
+        break;
+      }
+    }
+
+    // 如果不在帖子操作区域内，直接返回 false
+    if (!isInPostMenu) {
+      return { isLink: false, postNumber: null };
+    }
+
+    // 检查元素特征是否像链接按钮
     const text = element.textContent || '';
     const className = element.className || '';
     const dataValue = element.getAttribute('data-value') || '';
     const title = element.title || '';
     const ariaLabel = element.getAttribute('aria-label') || '';
 
-    // 链接按钮的特征：share、link、链接等
-    const isLinkLike = className.includes('share') ||
-           className.includes('link') ||
-           dataValue === 'share' ||
-           dataValue === 'link' ||
-           text.includes('链接') ||
-           text.includes('Link') ||
-           text.includes('Share') ||
-           text.toLowerCase().includes('share') ||
-           text.toLowerCase().includes('link') ||
-           title.toLowerCase().includes('share') ||
-           title.toLowerCase().includes('link') ||
-           title.includes('链接') ||
-           ariaLabel.toLowerCase().includes('share') ||
-           ariaLabel.toLowerCase().includes('link') ||
-           ariaLabel.includes('链接');
+    // 链接按钮的特征（更严格的检测）
+    // 优先检测 data-value 属性（Discourse 标准）
+    const isShareButton = dataValue === 'share' || dataValue === 'link';
+
+    // 如果没有 data-value，再检查其他特征（仅限文本精确匹配）
+    const isLinkLike = isShareButton ||
+           className.includes('share') ||
+           text.trim() === '链接' ||
+           text.trim() === 'Link' ||
+           text.trim() === 'Share' ||
+           title === '分享此帖子的链接' ||
+           title.toLowerCase() === 'share a link to this post' ||
+           ariaLabel === '分享此帖子的链接' ||
+           ariaLabel.toLowerCase() === 'share a link to this post';
 
     // 如果不像链接按钮，直接返回 false
     if (!isLinkLike) {
@@ -105,11 +135,6 @@
     const href = element.getAttribute('href') || '';
     if (href.includes('/bookmarks') || href.includes('/activity') || href.includes('/u/')) {
       console.log('[LinuxDo→Obsidian] 排除导航链接:', href);
-      return { isLink: false, postNumber: null };
-    }
-
-    // 必须在帖子页面上
-    if (!isTopicPage()) {
       return { isLink: false, postNumber: null };
     }
 
@@ -1167,7 +1192,7 @@
 
     pluginInitialized = true;
     currentTopicUrl = topicUrl;
-    console.log('[LinuxDo→Obsidian] 插件已加载 (V3.5.7 - 劫持链接按钮)');
+    console.log('[LinuxDo→Obsidian] 插件已加载 (V3.5.8 - 修复误触发)');
   }
 
   // 页面加载完成后初始化
