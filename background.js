@@ -1,10 +1,12 @@
-// LinuxDo to Obsidian - Background Script V3.5.5
+// LinuxDo to Obsidian - Background Script V3.5.13
 // 处理飞书API请求（解决CORS问题）
 // V3.5: 支持上传MD文件作为附件
 // V3.5.2: 支持飞书国内版和Lark国际版
 // V3.5.3: 配合 content.js 支持评论书签功能
 // V3.5.4: 版本同步
 // V3.5.5: 修复飞书记录搜索 - 改用标题搜索（超链接字段contains不搜索URL）
+// V3.5.12: 增强飞书测试连接 - 验证必需字段是否存在及类型是否正确
+// V3.5.13: 增强错误提示 - 针对常见配置错误给出友好提示
 
 // API 域名映射
 const API_DOMAINS = {
@@ -23,18 +25,216 @@ let feishuTokenCache = {
   lark: { token: null, expireTime: 0 }
 };
 
-// 安全解析 JSON 响应
+// 飞书错误码映射 - 提供友好的中文提示
+const FEISHU_ERROR_CODES = {
+  // 认证相关
+  10003: {
+    msg: 'App ID 或 App Secret 错误',
+    hint: '请检查飞书开放平台的应用凭证是否正确复制，注意不要包含多余空格'
+  },
+  10014: {
+    msg: 'App Secret 错误',
+    hint: '请重新复制 App Secret，注意 Secret 只显示一次，如果忘记需要重新生成'
+  },
+  99991663: {
+    msg: 'App ID 格式错误',
+    hint: 'App ID 应该是 cli_xxxxxx 格式，请检查是否完整复制'
+  },
+  99991664: {
+    msg: 'App Secret 格式错误',
+    hint: 'App Secret 格式不正确，请从飞书开放平台重新复制'
+  },
+
+  // 权限相关
+  1254043: {
+    msg: '应用权限不足',
+    hint: '请在飞书开放平台添加 bitable:app 权限，并将应用添加为多维表格的协作者'
+  },
+  1254044: {
+    msg: '无访问此文档的权限',
+    hint: '请确保已将应用添加为多维表格的「可编辑」协作者'
+  },
+  1254045: {
+    msg: '文档不存在或无权限',
+    hint: '请检查 app_token 是否正确，或确认应用已添加为协作者'
+  },
+  1254607: {
+    msg: '数据表不存在',
+    hint: 'table_id 错误或数据表已被删除\n\n' +
+          '📌 table_id 是【当前数据表】的标识\n' +
+          '提取方法：从 URL「?table=」后面的部分\n\n' +
+          '⚠️ 一个多维表格可以包含多个数据表：\n' +
+          '• 确保你复制的是正确的数据表 ID\n' +
+          '• 数据表 ID 以「tbl」开头\n' +
+          '• 打开多维表格，点击你要使用的数据表，然后从 URL 复制'
+  },
+
+  // 资源相关
+  1254301: {
+    msg: '多维表格不存在',
+    hint: 'app_token 错误\n\n' +
+          '📌 app_token 是【整个多维表格文档】的标识\n' +
+          '提取方法：从 URL「/base/」后面到「?」之前的部分\n\n' +
+          '示例 URL：https://feishu.cn/base/VwGhbxxxxx?table=tblyyy\n' +
+          'app_token 应该是：VwGhbxxxxx\n\n' +
+          '⚠️ 不要复制整个 URL，只复制对应部分'
+  },
+  1254302: {
+    msg: '数据表不存在',
+    hint: 'table_id 错误\n\n' +
+          '📌 table_id 是【当前数据表】的标识（以 tbl 开头）\n' +
+          '提取方法：从 URL「?table=」后面的部分\n\n' +
+          '示例 URL：https://feishu.cn/base/VwGhbxxxxx?table=tblyyyyyyy\n' +
+          'table_id 应该是：tblyyyyyyy\n\n' +
+          '⚠️ 注意：一个多维表格可以有多个数据表\n' +
+          '确保复制的是你要保存数据的那个表的 ID'
+  },
+  1254006: {
+    msg: '找不到指定的多维表格',
+    hint: 'app_token 错误\n\n' +
+          '📌 请检查 app_token 是否正确\n' +
+          '提取方法：从 URL「/base/」后面到「?」之前的部分\n\n' +
+          '常见错误：\n' +
+          '• 复制了整个 URL 而不是 app_token 部分\n' +
+          '• app_token 和 table_id 复制反了\n' +
+          '• 复制时包含了多余空格'
+  },
+
+  // 字段相关
+  1254016: {
+    msg: '字段不存在',
+    hint: '多维表格中缺少必需字段，请参考 README 创建：标题、链接、作者、保存时间、评论数、附件、正文'
+  },
+  1254017: {
+    msg: '字段类型不匹配',
+    hint: '请检查字段类型是否正确：链接必须是「超链接」类型，保存时间必须是「日期」类型，评论数必须是「数字」类型'
+  },
+  1254018: {
+    msg: '字段值格式错误',
+    hint: '请检查多维表格的字段类型配置是否正确'
+  },
+
+  // 应用状态相关
+  10012: {
+    msg: '应用未发布',
+    hint: '请在飞书开放平台「版本管理与发布」中发布应用，企业自建应用必须发布后才能使用 API'
+  },
+  10013: {
+    msg: '应用已停用',
+    hint: '请在飞书开放平台检查应用状态，确保应用处于启用状态'
+  },
+
+  // 频率限制
+  99991400: {
+    msg: 'API 调用频率超限',
+    hint: '请稍后再试，飞书 API 有调用频率限制'
+  },
+
+  // 网络/服务器相关
+  99991401: {
+    msg: '飞书服务暂时不可用',
+    hint: '飞书服务器可能正在维护，请稍后再试'
+  }
+};
+
+// HTTP 错误码映射
+const HTTP_ERROR_HINTS = {
+  400: {
+    msg: '请求参数错误',
+    hint: '请检查配置信息格式是否正确'
+  },
+  401: {
+    msg: '认证失败',
+    hint: 'App ID 或 App Secret 错误，请检查飞书应用凭证'
+  },
+  403: {
+    msg: '权限被拒绝',
+    hint: '请确保应用已添加 bitable:app 权限，并将应用添加为多维表格协作者'
+  },
+  404: {
+    msg: '多维表格或数据表不存在',
+    hint: '请仔细检查 app_token 和 table_id：\n\n' +
+          '📌 app_token（多维表格 token）：\n' +
+          '   • 从 URL 中「/base/」后面到「?」之前的部分\n' +
+          '   • 示例：VwGhbxxxxxxxxxxxxx\n' +
+          '   • 这是整个多维表格文档的标识\n\n' +
+          '📌 table_id（数据表 ID）：\n' +
+          '   • 从 URL 中「?table=」后面的部分\n' +
+          '   • 示例：tblyyyyyyyyyyy（以 tbl 开头）\n' +
+          '   • 这是你要保存数据的那个具体数据表的 ID\n\n' +
+          '⚠️ 常见错误：\n' +
+          '   • 复制了整个 URL 而不是提取对应部分\n' +
+          '   • app_token 和 table_id 复制反了\n' +
+          '   • 一个多维表格有多个数据表，选错了表\n' +
+          '   • 使用了 Lark 国际版但没有在设置中切换'
+  },
+  429: {
+    msg: 'API 调用过于频繁',
+    hint: '请稍后再试'
+  },
+  500: {
+    msg: '飞书服务器错误',
+    hint: '飞书服务器内部错误，请稍后再试'
+  },
+  502: {
+    msg: '网关错误',
+    hint: '飞书服务暂时不可用，请稍后再试'
+  },
+  503: {
+    msg: '服务不可用',
+    hint: '飞书服务正在维护，请稍后再试'
+  }
+};
+
+// 解析飞书错误，返回友好提示
+function parseFeishuError(code, originalMsg, context) {
+  const errorInfo = FEISHU_ERROR_CODES[code];
+
+  if (errorInfo) {
+    return `${context}失败：${errorInfo.msg}\n\n💡 解决方法：${errorInfo.hint}`;
+  }
+
+  // 未知错误码，返回原始信息
+  return `${context}失败：${originalMsg}\n（错误码: ${code}）`;
+}
+
+// 解析 HTTP 错误，返回友好提示
+function parseHttpError(status, context, responseText) {
+  const errorInfo = HTTP_ERROR_HINTS[status];
+
+  if (errorInfo) {
+    return `${context}失败：${errorInfo.msg}\n\n💡 可能原因：${errorInfo.hint}`;
+  }
+
+  // 未知 HTTP 错误
+  return `${context}失败：HTTP ${status}\n响应内容：${responseText.substring(0, 100)}`;
+}
+
+// 安全解析 JSON 响应（增强版）
 async function safeParseJson(response, context) {
   const text = await response.text();
 
   // 检查是否为空
   if (!text || text.trim() === '') {
-    throw new Error(`${context}: 服务器返回空响应`);
+    throw new Error(`${context}失败：服务器返回空响应\n\n💡 可能原因：\n• 网络连接问题\n• 飞书服务暂时不可用\n• API 地址不正确`);
   }
 
   // 检查 HTTP 状态
   if (!response.ok) {
-    throw new Error(`${context}: HTTP ${response.status} - ${text.substring(0, 200)}`);
+    // 尝试解析 JSON 错误信息
+    try {
+      const errorData = JSON.parse(text);
+      if (errorData.code !== undefined) {
+        throw new Error(parseFeishuError(errorData.code, errorData.msg || '未知错误', context));
+      }
+    } catch (parseError) {
+      // JSON 解析失败，使用 HTTP 错误处理
+      if (parseError.message.includes('失败：')) {
+        throw parseError; // 已经是格式化的错误
+      }
+    }
+
+    throw new Error(parseHttpError(response.status, context, text));
   }
 
   // 尝试解析 JSON
@@ -43,14 +243,27 @@ async function safeParseJson(response, context) {
   } catch (e) {
     // 如果是 HTML，提取有用信息
     if (text.includes('<!DOCTYPE') || text.includes('<html')) {
-      throw new Error(`${context}: 服务器返回HTML页面，可能是网络问题或API地址错误`);
+      throw new Error(`${context}失败：服务器返回了网页而不是数据\n\n💡 可能原因：\n• API 地址不正确\n• 网络代理或防火墙拦截\n• 飞书服务正在维护`);
     }
-    throw new Error(`${context}: JSON解析失败 - ${text.substring(0, 100)}`);
+    throw new Error(`${context}失败：无法解析服务器响应\n\n响应内容：${text.substring(0, 100)}`);
   }
 }
 
 // 获取飞书 tenant_access_token
 async function getFeishuToken(appId, appSecret, apiDomain = 'feishu') {
+  // 先验证参数
+  if (!appId || !appId.trim()) {
+    throw new Error('App ID 未填写\n\n💡 请在飞书开放平台「凭证与基础信息」中复制 App ID');
+  }
+  if (!appSecret || !appSecret.trim()) {
+    throw new Error('App Secret 未填写\n\n💡 请在飞书开放平台「凭证与基础信息」中复制 App Secret');
+  }
+
+  // App ID 格式检查
+  if (!appId.startsWith('cli_')) {
+    throw new Error(`App ID 格式错误：${appId.substring(0, 20)}...\n\n💡 App ID 应该以「cli_」开头，请检查是否复制正确`);
+  }
+
   const cache = feishuTokenCache[apiDomain] || feishuTokenCache.feishu;
 
   // 检查缓存是否有效（提前5分钟过期）
@@ -62,21 +275,26 @@ async function getFeishuToken(appId, appSecret, apiDomain = 'feishu') {
   const baseUrl = getApiBaseUrl(apiDomain);
   console.log('[LinuxDo→飞书] 获取新的tenant_access_token，API域名:', baseUrl);
 
-  const response = await fetch(`${baseUrl}/open-apis/auth/v3/tenant_access_token/internal`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      app_id: appId,
-      app_secret: appSecret
-    })
-  });
+  let response;
+  try {
+    response = await fetch(`${baseUrl}/open-apis/auth/v3/tenant_access_token/internal`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        app_id: appId.trim(),
+        app_secret: appSecret.trim()
+      })
+    });
+  } catch (fetchError) {
+    throw new Error(`网络连接失败\n\n💡 可能原因：\n• 无法访问飞书服务器\n• 网络连接不稳定\n• 如果使用代理，请检查代理设置\n\n原始错误：${fetchError.message}`);
+  }
 
-  const data = await safeParseJson(response, '获取token');
+  const data = await safeParseJson(response, '获取访问令牌');
 
   if (data.code !== 0) {
-    throw new Error(`获取飞书token失败: ${data.msg}`);
+    throw new Error(parseFeishuError(data.code, data.msg, '获取访问令牌'));
   }
 
   // 缓存token（有效期2小时）
@@ -139,6 +357,9 @@ async function saveToFeishu(config, postData) {
   const { apiDomain, appId, appSecret, appToken, tableId, uploadAttachment } = config;
   const domain = apiDomain || 'feishu';
 
+  // 验证必填参数
+  validateFeishuConfig(config);
+
   // 获取token
   const token = await getFeishuToken(appId, appSecret, domain);
 
@@ -177,23 +398,101 @@ async function saveToFeishu(config, postData) {
   const baseUrl = getApiBaseUrl(domain);
   const apiUrl = `${baseUrl}/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records`;
 
-  const response = await fetch(apiUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`
-    },
-    body: JSON.stringify(record)
-  });
+  let response;
+  try {
+    response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(record)
+    });
+  } catch (fetchError) {
+    throw new Error(`网络连接失败\n\n💡 请检查网络连接后重试\n\n原始错误：${fetchError.message}`);
+  }
 
   const data = await safeParseJson(response, '保存记录');
 
   if (data.code !== 0) {
-    throw new Error(`保存到飞书失败: ${data.msg}`);
+    throw new Error(parseFeishuError(data.code, data.msg, '保存记录'));
   }
 
   console.log('[LinuxDo→飞书] 保存成功，record_id:', data.data.record.record_id);
   return data.data.record;
+}
+
+// 验证飞书配置参数
+function validateFeishuConfig(config) {
+  const { appId, appSecret, appToken, tableId, apiDomain } = config;
+
+  // 检查 App ID
+  if (!appId || !appId.trim()) {
+    throw new Error('App ID 未配置\n\n💡 请在插件设置中填写飞书应用的 App ID');
+  }
+  if (!appId.startsWith('cli_')) {
+    throw new Error(`App ID 格式错误\n\n💡 App ID 应该以「cli_」开头\n当前值：${appId.substring(0, 20)}...`);
+  }
+
+  // 检查 App Secret
+  if (!appSecret || !appSecret.trim()) {
+    throw new Error('App Secret 未配置\n\n💡 请在插件设置中填写飞书应用的 App Secret');
+  }
+  if (appSecret.length < 20) {
+    throw new Error('App Secret 格式错误\n\n💡 App Secret 太短，请检查是否完整复制');
+  }
+
+  // 检查 app_token（多维表格 token）
+  if (!appToken || !appToken.trim()) {
+    throw new Error('app_token（多维表格 token）未配置\n\n' +
+                    '💡 app_token 是指【整个多维表格文档】的标识\n\n' +
+                    '提取方法：从多维表格 URL 中复制\n' +
+                    '示例 URL：https://feishu.cn/base/【这里是 app_token】?table=xxx\n\n' +
+                    '⚠️ 注意：\n' +
+                    '• 这是整个多维表格文档的 token\n' +
+                    '• 不是单个数据表的 ID');
+  }
+  // app_token 通常是一串字母数字
+  if (appToken.includes('/') || appToken.includes('?') || appToken.includes('&')) {
+    throw new Error(`app_token 格式错误\n\n` +
+                    `💡 app_token 不应包含「/」「?」「&」等字符\n` +
+                    `当前值：${appToken.substring(0, 30)}...\n\n` +
+                    `正确提取方法：\n` +
+                    `从 URL「/base/」后面到「?」之前的部分\n\n` +
+                    `示例：\n` +
+                    `URL: https://feishu.cn/base/VwGhbxxxxx?table=tblyyy\n` +
+                    `app_token 是: VwGhbxxxxx`);
+  }
+
+  // 检查 table_id（数据表 ID）
+  if (!tableId || !tableId.trim()) {
+    throw new Error('table_id（数据表 ID）未配置\n\n' +
+                    '💡 table_id 是指多维表格中【当前数据表】的标识\n\n' +
+                    '提取方法：从多维表格 URL 中复制\n' +
+                    '示例 URL：https://feishu.cn/base/xxx?table=【这里是 table_id】\n\n' +
+                    '⚠️ 注意：\n' +
+                    '• 这是你要保存数据的那个具体数据表的 ID\n' +
+                    '• 一个多维表格可以有多个数据表，确保选择正确的表\n' +
+                    '• 数据表 ID 以「tbl」开头');
+  }
+  if (!tableId.startsWith('tbl')) {
+    throw new Error(`table_id 格式错误\n\n` +
+                    `💡 table_id 应该以「tbl」开头\n` +
+                    `当前值：${tableId.substring(0, 20)}...\n\n` +
+                    `正确提取方法：\n` +
+                    `从 URL「?table=」后面的部分\n\n` +
+                    `示例：\n` +
+                    `URL: https://feishu.cn/base/VwGhbxxxxx?table=tblyyyyyyy\n` +
+                    `table_id 是: tblyyyyyyy\n\n` +
+                    `⚠️ 注意：确保复制的是当前要使用的数据表 ID，而不是其他数据表`);
+  }
+
+  // 检查 API 版本选择
+  if (apiDomain && !['feishu', 'lark'].includes(apiDomain)) {
+    throw new Error(`API 版本选择错误\n\n💡 请选择「飞书国内版」或「Lark 国际版」`);
+  }
+
+  return true;
 }
 
 // 检查飞书记录是否存在（通过标题搜索）
@@ -311,19 +610,24 @@ async function updateFeishuRecord(config, recordId, postData) {
   const baseUrl = getApiBaseUrl(domain);
   const apiUrl = `${baseUrl}/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records/${recordId}`;
 
-  const response = await fetch(apiUrl, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`
-    },
-    body: JSON.stringify(record)
-  });
+  let response;
+  try {
+    response = await fetch(apiUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(record)
+    });
+  } catch (fetchError) {
+    throw new Error(`网络连接失败\n\n💡 请检查网络连接后重试\n\n原始错误：${fetchError.message}`);
+  }
 
   const data = await safeParseJson(response, '更新记录');
 
   if (data.code !== 0) {
-    throw new Error(`更新飞书记录失败: ${data.msg}`);
+    throw new Error(parseFeishuError(data.code, data.msg, '更新记录'));
   }
 
   console.log('[LinuxDo→飞书] 更新成功');
@@ -374,37 +678,157 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const domain = apiDomain || 'feishu';
         const baseUrl = getApiBaseUrl(domain);
 
+        // 步骤0: 验证配置参数格式
+        console.log('[LinuxDo→飞书] 步骤0: 验证配置参数...');
+        try {
+          validateFeishuConfig(request.config);
+        } catch (validationError) {
+          sendResponse({ success: false, error: validationError.message });
+          return;
+        }
+
         // 步骤1: 测试获取 token
         console.log('[LinuxDo→飞书] 步骤1: 获取 token...');
         const token = await getFeishuToken(appId, appSecret, domain);
         console.log('[LinuxDo→飞书] Token 获取成功');
 
-        // 步骤2: 测试列出记录（比获取表格信息更可靠）
-        console.log('[LinuxDo→飞书] 步骤2: 测试访问表格...');
-        const apiUrl = `${baseUrl}/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records?page_size=1`;
-        console.log('[LinuxDo→飞书] 测试 API URL:', apiUrl);
+        // 步骤2: 获取表格字段列表
+        console.log('[LinuxDo→飞书] 步骤2: 获取表格字段列表...');
+        const fieldsUrl = `${baseUrl}/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/fields`;
+        console.log('[LinuxDo→飞书] 字段列表 API URL:', fieldsUrl);
 
-        const response = await fetch(apiUrl, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`
+        let fieldsResponse;
+        try {
+          fieldsResponse = await fetch(fieldsUrl, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          });
+        } catch (fetchError) {
+          throw new Error(`网络连接失败\n\n💡 可能原因：\n• 无法访问飞书服务器\n• 网络连接不稳定\n\n原始错误：${fetchError.message}`);
+        }
+
+        const fieldsData = await safeParseJson(fieldsResponse, '获取字段列表');
+
+        if (fieldsData.code !== 0) {
+          throw new Error(parseFeishuError(fieldsData.code, fieldsData.msg, '获取字段列表'));
+        }
+
+        // 步骤3: 验证字段
+        console.log('[LinuxDo→飞书] 步骤3: 验证字段配置...');
+        const fields = fieldsData.data?.items || [];
+
+        // 飞书字段类型映射
+        const FIELD_TYPES = {
+          TEXT: 1,        // 文本
+          NUMBER: 2,      // 数字
+          DATE: 5,        // 日期
+          URL: 15,        // 超链接
+          ATTACHMENT: 17  // 附件
+        };
+
+        // 必需字段配置
+        const REQUIRED_FIELDS = [
+          { name: '标题', type: FIELD_TYPES.TEXT, desc: '文本' },
+          { name: '链接', type: FIELD_TYPES.URL, desc: '超链接' },
+          { name: '作者', type: FIELD_TYPES.TEXT, desc: '文本' },
+          { name: '保存时间', type: FIELD_TYPES.DATE, desc: '日期' },
+          { name: '评论数', type: FIELD_TYPES.NUMBER, desc: '数字' },
+          { name: '附件', type: FIELD_TYPES.ATTACHMENT, desc: '附件' },
+          { name: '正文', type: FIELD_TYPES.TEXT, desc: '文本' }
+        ];
+
+        // 构建字段映射
+        const fieldMap = {};
+        fields.forEach(field => {
+          fieldMap[field.field_name] = {
+            type: field.type,
+            typeName: getFieldTypeName(field.type)
+          };
+        });
+
+        // 验证字段
+        const missingFields = [];
+        const wrongTypeFields = [];
+
+        REQUIRED_FIELDS.forEach(required => {
+          const existing = fieldMap[required.name];
+
+          if (!existing) {
+            // 字段不存在
+            missingFields.push(`「${required.name}」(类型: ${required.desc})`);
+          } else if (existing.type !== required.type) {
+            // 字段类型不匹配
+            wrongTypeFields.push(
+              `「${required.name}」(期望: ${required.desc}, 实际: ${existing.typeName})`
+            );
           }
         });
 
-        const data = await safeParseJson(response, '访问表格');
+        // 如果有错误，返回详细提示
+        if (missingFields.length > 0 || wrongTypeFields.length > 0) {
+          let errorMsg = '字段配置有误：\n\n';
 
-        if (data.code !== 0) {
-          // 如果是权限问题，给出更友好的提示
-          if (data.code === 1254043 || data.msg?.includes('permission')) {
-            throw new Error(`权限不足，请确保应用已添加 bitable:app 权限，且已将应用添加为多维表格协作者`);
+          if (missingFields.length > 0) {
+            errorMsg += `❌ 缺失字段（${missingFields.length}个）：\n`;
+            errorMsg += missingFields.map(f => `  • ${f}`).join('\n');
+            errorMsg += '\n\n';
           }
-          throw new Error(`访问表格失败: ${data.msg} (错误码: ${data.code})`);
+
+          if (wrongTypeFields.length > 0) {
+            errorMsg += `⚠️ 字段类型错误（${wrongTypeFields.length}个）：\n`;
+            errorMsg += wrongTypeFields.map(f => `  • ${f}`).join('\n');
+            errorMsg += '\n\n';
+          }
+
+          errorMsg += '请在飞书多维表格中创建或修正这些字段。\n';
+          errorMsg += '详细要求请参考 README.md 的「飞书配置教程」。';
+
+          throw new Error(errorMsg);
         }
 
-        const recordCount = data.data?.total || 0;
+        // 步骤4: 测试访问记录
+        console.log('[LinuxDo→飞书] 步骤4: 测试访问表格记录...');
+        const recordsUrl = `${baseUrl}/open-apis/bitable/v1/apps/${appToken}/tables/${tableId}/records?page_size=1`;
+
+        let recordsResponse;
+        try {
+          recordsResponse = await fetch(recordsUrl, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          });
+        } catch (fetchError) {
+          throw new Error(`网络连接失败\n\n💡 请检查网络连接后重试\n\n原始错误：${fetchError.message}`);
+        }
+
+        const recordsData = await safeParseJson(recordsResponse, '访问表格记录');
+
+        if (recordsData.code !== 0) {
+          throw new Error(parseFeishuError(recordsData.code, recordsData.msg, '访问表格记录'));
+        }
+
+        const recordCount = recordsData.data?.total || 0;
+        const domainName = domain === 'lark' ? 'Lark 国际版' : '飞书国内版';
+
+        // 显示检测到的字段列表
+        const detectedFields = fields.map(f => f.field_name).join('、');
+        const requiredFieldNames = REQUIRED_FIELDS.map(f => f.name).join('、');
+
         sendResponse({
           success: true,
-          message: `连接成功！表格中有 ${recordCount} 条记录`
+          message: `✅ 连接成功！\n\n` +
+                   `📋 配置验证通过：\n` +
+                   `  • API 版本：${domainName}\n` +
+                   `  • 应用认证：通过\n` +
+                   `  • 表格访问：正常\n` +
+                   `  • 现有记录：${recordCount} 条\n\n` +
+                   `📝 字段验证通过（7个必需字段）：\n` +
+                   `  ${requiredFieldNames}\n\n` +
+                   `📊 当前数据表的所有字段：\n` +
+                   `  ${detectedFields}`
         });
       } catch (error) {
         console.error('[LinuxDo→飞书] 测试连接失败:', error);
@@ -416,4 +840,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 });
 
-console.log('[LinuxDo→Obsidian] Background script 已加载 (V3.5.5)');
+// 辅助函数：获取字段类型名称
+function getFieldTypeName(typeCode) {
+  const typeNames = {
+    1: '文本',
+    2: '数字',
+    3: '单选',
+    4: '多选',
+    5: '日期',
+    7: '复选框',
+    11: '人员',
+    13: '电话号码',
+    15: '超链接',
+    17: '附件',
+    18: '单向关联',
+    21: '查找引用',
+    22: '公式',
+    23: '双向关联'
+  };
+  return typeNames[typeCode] || `未知类型(${typeCode})`;
+}
+
+console.log('[LinuxDo→Obsidian] Background script 已加载 (V3.5.13)');

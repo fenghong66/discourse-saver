@@ -2,6 +2,17 @@
 
 一键保存 LinuxDo 帖子+评论到 **Obsidian** 或 **飞书多维表格**，支持双保存。
 
+## 浏览器支持
+
+| 浏览器 | 支持状态 | 说明 |
+|-------|---------|------|
+| Chrome | ✅ 完全支持 | 原生支持 |
+| Edge | ✅ 完全支持 | 基于 Chromium，完全兼容 |
+| Brave | ✅ 完全支持 | 基于 Chromium，完全兼容 |
+| Opera | ✅ 完全支持 | 基于 Chromium，完全兼容 |
+| Firefox | ❌ 不支持 | 扩展API不兼容 |
+| Safari | ❌ 不支持 | 扩展API不兼容 |
+
 ## 核心功能
 
 | 操作 | 效果 |
@@ -28,11 +39,19 @@
 
 ## 安装方法
 
+### Chrome / Edge / Brave / Opera 安装
+
 1. 下载本插件的所有文件到本地文件夹
-2. 打开 Chrome 浏览器，访问 `chrome://extensions/`
+2. 打开浏览器扩展页面：
+   - **Chrome**：访问 `chrome://extensions/`
+   - **Edge**：访问 `edge://extensions/`
+   - **Brave**：访问 `brave://extensions/`
+   - **Opera**：访问 `opera://extensions/`
 3. 开启右上角的「开发者模式」
 4. 点击「加载已解压的扩展程序」
 5. 选择插件文件夹 `linuxdo-to-obsidian`
+
+> **提示**：所有基于 Chromium 的浏览器（Chrome、Edge、Brave、Opera等）都支持本扩展
 
 ---
 
@@ -167,7 +186,20 @@
 https://feishu.cn/base/XxXxXxXxXxXxXxXxXxXxXxXxXxX?table=tblXxXxXxXxXxXx&view=...
                     └─────────────────────────────┘      └───────────────┘
                             app_token                        table_id
+                      （整个多维表格文档的标识）         （当前数据表的标识）
 ```
+
+> **重要说明**：
+>
+> | 参数 | 含义 | 提取位置 | 格式 |
+> |-----|------|---------|------|
+> | **app_token** | 整个多维表格文档的标识 | URL 中 `/base/` 后面到 `?` 之前 | 字母数字串 |
+> | **table_id** | 当前数据表的标识 | URL 中 `?table=` 后面的部分 | 以 `tbl` 开头 |
+>
+> **常见错误**：
+> - 复制了整个 URL 而不是提取对应部分
+> - app_token 和 table_id 复制反了
+> - 一个多维表格可以有多个数据表，确保复制的是你要使用的那个数据表的 ID
 
 ### 第六步：添加应用为协作者
 
@@ -191,6 +223,12 @@ https://feishu.cn/base/XxXxXxXxXxXxXxXxXxXxXxXxXxX?table=tblXxXxXxXxXxXx&view=..
 ### 第八步：填写插件配置
 
 在Chrome插件配置页面的「飞书设置」中填入相关信息，点击「**测试连接**」验证。
+
+> **V3.5.12 新增**：测试连接时会自动验证以下字段是否存在及类型是否正确：
+> - 标题（文本）、链接（超链接）、作者（文本）、保存时间（日期）
+> - 评论数（数字）、附件（附件）、正文（文本）
+>
+> 如果字段配置有误，会显示详细的错误提示。详见 [FEISHU-FIELD-VALIDATION.md](FEISHU-FIELD-VALIDATION.md)
 
 ---
 
@@ -281,9 +319,44 @@ https://feishu.cn/base/XxXxXxXxXxXxXxXxXxXxXxXxXxX?table=tblXxXxXxXxXxXx&view=..
 2. 配置步骤与国内版相同
 3. 在插件配置中选择「**Lark 国际版**」
 
+### Q8: Edge 浏览器可以使用吗？
+
+**A:** 可以！Edge 浏览器基于 Chromium 内核，完全支持本扩展。安装方法：
+1. 访问 `edge://extensions/`
+2. 开启「开发者模式」
+3. 点击「加载解压缩的扩展」
+4. 选择插件文件夹
+
+所有基于 Chromium 的浏览器（Chrome、Edge、Brave、Opera）都支持本扩展。
+
 ---
 
 ## 更新日志
+
+### v3.5.13 (2026-03-11)
+
+- **新增**：全面增强错误提示系统
+  - 40+ 飞书错误码映射，每个错误都有详细的中文说明和解决方法
+  - HTTP 错误码友好提示（400/401/403/404/429/500/502/503）
+  - 配置参数格式验证（App ID、App Secret、app_token、table_id）
+- **优化**：app_token 和 table_id 说明更清晰
+  - 明确 app_token 是「整个多维表格文档」的标识
+  - 明确 table_id 是「当前数据表」的标识
+  - 提供详细的提取示例和常见错误说明
+- **优化**：测试连接成功时显示更详细的配置验证结果
+
+### v3.5.12 (2026-03-11)
+
+- **新增**：飞书字段验证功能 - 测试连接时自动检查7个必需字段
+- **新增**：详细的字段错误提示（缺失字段、类型错误）
+- **新增**：FEISHU-FIELD-VALIDATION.md 文档
+- **优化**：测试连接成功提示更详细
+
+### v3.5.11 (2026-03-11)
+
+- **新增**：明确支持 Edge、Brave、Opera 等 Chromium 浏览器
+- **优化**：更新 README 安装说明，添加多浏览器支持文档
+- **优化**：添加浏览器兼容性对照表
 
 ### v3.5.10 (2026-03-11)
 
@@ -340,6 +413,19 @@ https://feishu.cn/base/XxXxXxXxXxXxXxXxXxXxXxXxXxX?table=tblXxXxXxXxXxXx&view=..
 ---
 
 ## 技术细节
+
+### 浏览器兼容性
+
+本扩展使用 **Manifest V3** 标准，完全兼容所有基于 Chromium 的浏览器：
+
+| 技术标准 | 兼容浏览器 |
+|---------|-----------|
+| Manifest V3 | Chrome 88+, Edge 88+, Brave 1.20+, Opera 74+ |
+| Chrome Extension API | 完全兼容 Chromium 内核浏览器 |
+| Content Scripts | 跨浏览器标准API |
+| Service Worker | 替代传统 Background Scripts |
+
+> **注意**：Firefox 使用不同的扩展 API（WebExtensions），不兼容本扩展
 
 ### 文件结构
 
