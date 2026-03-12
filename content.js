@@ -1,4 +1,4 @@
-// LinuxDo to Obsidian - Content Script V3.5.10
+// LinuxDo to Obsidian - Content Script V3.5.13
 // 劫持链接按钮，保存帖子+评论到Obsidian（保留颜色样式）
 // V3.5: 支持同时保存到飞书多维表格（带MD附件）
 // V3.5.1: 单击保存到Obsidian，双击触发L站原生收藏
@@ -11,6 +11,9 @@
 // V3.5.8: 修复误触发问题 - 增加严格的区域检测，只拦截帖子操作菜单中的链接按钮
 // V3.5.9: 增强链接按钮检测 - 使用 post-action-menu__copy-link class
 // V3.5.10: 修复评论楼层号获取 - 从 .topic-post 而非 article 获取 data-post-number
+// V3.5.11: 明确支持 Edge/Brave/Opera 等 Chromium 浏览器
+// V3.5.12: 飞书字段验证功能
+// V3.5.13: 增强错误提示 + UI文字更新（链接按钮）+ Mac快捷键支持
 //
 // 功能说明：
 // - 点击主帖链接按钮：保存主帖（如开启"保存评论"则包含所有评论）
