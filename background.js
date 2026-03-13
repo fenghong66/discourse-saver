@@ -1,4 +1,4 @@
-// Discourse Saver - Background Script V4.0.4
+// Discourse Saver - Background Script V4.0.5
 // 处理飞书/Notion API请求（解决CORS问题）+ 动态脚本注入
 // V3.5: 支持上传MD文件作为附件
 // V3.5.2: 支持飞书国内版和Lark国际版
@@ -7,6 +7,7 @@
 // V4.0.2: 修复 Notion 内容换行问题
 // V4.0.3: Notion 支持视频嵌入（YouTube/Bilibili/Vimeo）+ 链接预览（bookmark）
 // V4.0.4: 配合 content.js 修复视频封面重复问题
+// V4.0.5: Notion 支持更多视频平台（优酷/TikTok/QQ视频/西瓜/Facebook），非原生平台使用bookmark
 // V3.5.4: 版本同步
 // V3.5.5: 修复飞书记录搜索 - 改用标题搜索（超链接字段contains不搜索URL）
 // V3.5.12: 增强飞书测试连接 - 验证必需字段是否存在及类型是否正确
@@ -923,32 +924,67 @@ function buildNotionPageData(postData, config) {
             });
           }
         } else if (/<iframe[^>]+src="([^"]+)"[^>]*>/i.test(trimmedLine)) {
-          // V4.0.3: 支持 iframe 视频嵌入 (YouTube, Bilibili, Vimeo)
+          // V4.0.3+V4.0.5: 支持 iframe 视频嵌入 (多平台)
+          // Notion 原生支持: YouTube, Vimeo
+          // 其他平台: 使用 bookmark 块
           const iframeMatch = trimmedLine.match(/<iframe[^>]+src="([^"]+)"[^>]*>/i);
           if (iframeMatch && iframeMatch[1]) {
             const embedUrl = iframeMatch[1];
             // 检测视频平台并转换为原始链接
             let videoUrl = embedUrl;
+            let useVideoBlock = false; // 是否使用 Notion 原生 video 块
+
             if (embedUrl.includes('youtube.com/embed/')) {
               const videoId = embedUrl.match(/youtube\.com\/embed\/([^?&]+)/)?.[1];
               if (videoId) videoUrl = 'https://www.youtube.com/watch?v=' + videoId;
-            } else if (embedUrl.includes('player.bilibili.com')) {
-              const bvid = embedUrl.match(/bvid=([^&]+)/)?.[1];
-              if (bvid) videoUrl = 'https://www.bilibili.com/video/' + bvid;
+              useVideoBlock = true; // YouTube 原生支持
             } else if (embedUrl.includes('player.vimeo.com')) {
               const vimeoId = embedUrl.match(/vimeo\.com\/video\/(\d+)/)?.[1];
               if (vimeoId) videoUrl = 'https://vimeo.com/' + vimeoId;
+              useVideoBlock = true; // Vimeo 原生支持
+            } else if (embedUrl.includes('player.bilibili.com')) {
+              const bvid = embedUrl.match(/bvid=([^&]+)/)?.[1];
+              if (bvid) videoUrl = 'https://www.bilibili.com/video/' + bvid;
+              // Bilibili 使用 bookmark，Notion 不原生支持
+            } else if (embedUrl.includes('player.youku.com')) {
+              const youkuId = embedUrl.match(/embed\/([^?&/]+)/)?.[1];
+              if (youkuId) videoUrl = 'https://v.youku.com/v_show/id_' + youkuId + '.html';
+            } else if (embedUrl.includes('tiktok.com/embed/')) {
+              const tiktokId = embedUrl.match(/embed\/(\d+)/)?.[1];
+              if (tiktokId) videoUrl = 'https://www.tiktok.com/video/' + tiktokId;
+            } else if (embedUrl.includes('v.qq.com')) {
+              const qqVid = embedUrl.match(/vid=([^&]+)/)?.[1];
+              if (qqVid) videoUrl = 'https://v.qq.com/x/cover/' + qqVid + '.html';
+            } else if (embedUrl.includes('ixigua.com/iframe/')) {
+              const xiguaId = embedUrl.match(/iframe\/(\d+)/)?.[1];
+              if (xiguaId) videoUrl = 'https://www.ixigua.com/' + xiguaId;
+            } else if (embedUrl.includes('facebook.com/plugins/video')) {
+              const fbMatch = embedUrl.match(/href=([^&]+)/);
+              if (fbMatch) videoUrl = decodeURIComponent(fbMatch[1]);
             }
-            children.push({
-              object: 'block',
-              type: 'video',
-              video: {
-                type: 'external',
-                external: {
+
+            if (useVideoBlock) {
+              // YouTube/Vimeo 使用原生 video 块
+              children.push({
+                object: 'block',
+                type: 'video',
+                video: {
+                  type: 'external',
+                  external: {
+                    url: videoUrl
+                  }
+                }
+              });
+            } else {
+              // 其他平台使用 bookmark 块（链接预览卡片）
+              children.push({
+                object: 'block',
+                type: 'bookmark',
+                bookmark: {
                   url: videoUrl
                 }
-              }
-            });
+              });
+            }
           }
         } else if (/^\[.+\]\((https?:\/\/[^)]+)\)$/.test(trimmedLine)) {
           // V4.0.3: 纯链接行转为 bookmark（链接预览卡片）

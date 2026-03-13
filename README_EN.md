@@ -1,10 +1,10 @@
-# Discourse Saver V4.0.4
+# Discourse Saver V4.0.5
 
 **[中文](README.md) | English**
 
 Save **any Discourse forum** posts and comments to **Obsidian**, **Feishu Bitable**, or **Notion** with one click.
 
-> **V4.0.4 New**: Enhanced video platform support - Added Youku, Douyin, TikTok, X/Twitter, Facebook, QQ Video, Xigua Video
+> **V4.0.5 New**: Fixed Notion multi-platform video support - YouTube/Vimeo native playback, other platforms use bookmark cards
 
 ## Browser Support
 

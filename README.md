@@ -1,10 +1,10 @@
-# Discourse Saver V4.0.4
+# Discourse Saver V4.0.5
 
 **中文 | [English](README_EN.md)**
 
 通用 Discourse 论坛内容保存工具 - 一键保存任意 Discourse 论坛（如 LinuxDo、Discourse Meta、Rust Users 等数百个站点）的帖子和评论到 Obsidian、飞书多维表格或 Notion。
 
-> **V4.0.4 新增**：增强视频平台支持 - 新增优酷、抖音、TikTok、X/Twitter、Facebook、腾讯视频、西瓜视频
+> **V4.0.5 新增**：修复 Notion 多平台视频支持 - YouTube/Vimeo 原生播放，其他平台智能转为链接预览卡片
 
 ## 浏览器支持
 
@@ -496,6 +496,19 @@
 ---
 
 ## 更新日志
+
+### v4.0.5 (2026-03-13)
+
+- **修复**：Notion 多平台视频支持改进
+  - YouTube、Vimeo 使用 Notion 原生 video 块（可直接播放）
+  - Bilibili、优酷、TikTok、QQ视频、西瓜视频、Facebook 改用 bookmark 块
+  - 解决 Notion 不原生支持国内视频平台的问题
+- **新增**：Notion iframe 解析支持更多平台
+  - 新增优酷 `player.youku.com/embed/` 解析
+  - 新增 TikTok `tiktok.com/embed/` 解析
+  - 新增 QQ视频 `v.qq.com` 解析
+  - 新增西瓜视频 `ixigua.com/iframe/` 解析
+  - 新增 Facebook `facebook.com/plugins/video` 解析
 
 ### v4.0.4 (2026-03-13)
 
