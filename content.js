@@ -493,20 +493,13 @@
         // 提取描述
         const descEl = node.querySelector('.onebox-description, .description, p, .excerpt');
         const description = descEl?.textContent?.trim() || '';
-        // 提取图片
-        const imgEl = node.querySelector('img.thumbnail, img.onebox-avatar, .onebox-body img');
-        const imgSrc = imgEl?.src || '';
 
-        // 构建丰富的引用块格式
+        // 构建丰富的引用块格式（不含图片）
         let result = '\n\n> **' + title + '**\n';
         if (description) {
           result += '> ' + description.substring(0, 200) + (description.length > 200 ? '...' : '') + '\n';
         }
-        result += '> 🔗 ' + href + '\n';
-        if (imgSrc) {
-          result += '> ![](' + imgSrc + ')\n';
-        }
-        result += '\n';
+        result += '> 🔗 ' + href + '\n\n';
 
         return result;
       }
