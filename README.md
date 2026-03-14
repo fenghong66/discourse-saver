@@ -1,13 +1,13 @@
-# Discourse Saver V4.0.5
+# Discourse Saver V4.2.1
 
 **中文 | [English](README_EN.md)**
 
 通用 Discourse 论坛内容保存工具 - 一键保存任意 Discourse 论坛（如 LinuxDo、Discourse Meta、Rust Users 等数百个站点）的帖子和评论到 Obsidian、飞书多维表格或 Notion。
 
-> **V4.0.5 更新**：
-> - 多语言支持 - 设置页面支持中文/English 切换
-> - 评论 API 获取 - 通过 Discourse API 获取全部评论，解决懒加载限制
-> - 56+ 站点兼容 - 已测试 60 个 Discourse 站点，93.3% 通过率
+> **V4.2.1 更新**：
+> - 飞书正文优化 - 移除图片链接，只保留纯文本和有价值链接
+> - 有价值链接保留 - 视频(YouTube/Bilibili)、代码仓库(GitHub/GitLab)、论坛(linux.do等)
+> - 内容清理 - 自动清理特殊字符、规范换行、控制长度
 
 ## 浏览器支持
 
@@ -606,6 +606,26 @@
 ---
 
 ## 更新日志
+
+### v4.2.1 (2026-03-14)
+
+- **优化**：飞书多行文本字段内容优化
+  - 移除图片链接（太占空间），只保留 `[图片: alt]` 标识
+  - 移除普通网页链接，只保留链接文本
+  - 保留有价值的链接（视频、代码仓库、论坛等）
+- **新增**：有价值链接白名单
+  - 视频平台：YouTube、Bilibili、Vimeo、优酷、爱奇艺、QQ视频、抖音、TikTok、西瓜视频
+  - 代码仓库：GitHub、GitLab、Gitee、Bitbucket、Codeberg
+  - 论坛站点：linux.do、meta.discourse.org、community.openai.com、forum.cursor.com 等
+  - 技术资源：StackOverflow、Gist、CodeSandbox、CodePen、Replit
+  - 研究资源：HuggingFace、Kaggle、arXiv、DOI
+- **优化**：内容清理增强
+  - 自动移除不可见控制字符和零宽字符
+  - 标准化换行符（统一为 `\n`）
+  - 移除连续多个换行（最多保留2个）
+  - 移除多余空格
+  - 自动截断超长内容（10万字符限制）
+- **新增**：飞书错误码 1254060 友好提示
 
 ### v4.0.5 (2026-03-14)
 

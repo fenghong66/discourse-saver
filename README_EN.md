@@ -1,13 +1,13 @@
-# Discourse Saver V4.0.5
+# Discourse Saver V4.2.1
 
 **[中文](README.md) | English**
 
 Save **any Discourse forum** posts and comments to **Obsidian**, **Feishu Bitable**, or **Notion** with one click.
 
-> **V4.0.5 Updates**:
-> - Multi-language Support - Settings page supports Chinese/English toggle
-> - Comments API Fetch - Fetch all comments via Discourse API, solving lazy-loading limitation
-> - 56+ Sites Compatible - Tested 60 Discourse sites, 93.3% pass rate
+> **V4.2.1 Updates**:
+> - Feishu Content Optimization - Remove image links, keep only plain text and valuable links
+> - Valuable Links Preserved - Videos (YouTube/Bilibili), Code Repos (GitHub/GitLab), Forums (linux.do, etc.)
+> - Content Cleanup - Auto-clean special characters, normalize line breaks, control length
 
 ## Browser Support
 

@@ -1,4 +1,4 @@
-// Discourse Saver - Content Script V4.0.4
+// Discourse Saver - Content Script V4.2.1
 // 劫持链接按钮，保存帖子+评论到Obsidian（保留颜色样式）
 // V3.5: 支持同时保存到飞书多维表格（带MD附件）
 // V3.5.1: 单击保存到Obsidian，双击触发原生复制链接
@@ -19,6 +19,7 @@
 // V4.0.2: 修复换行丢失问题 - <br>标签现在正确转换为换行符
 // V4.0.3: onebox 链接预览优化 + 在线视频链接自动转 iframe（YouTube/Bilibili/Vimeo）
 // V4.0.4: 修复视频封面重复问题 - 视频链接转iframe时自动删除封面图片，非视频链接保留缩略图
+// V4.0.6: 修复只启用飞书/Notion时的反馈和错误处理问题
 //
 // 功能说明：
 // - 点击主帖链接按钮：保存主帖（如开启"保存评论"则包含所有评论）
@@ -1464,6 +1465,8 @@
 
       if (feishuConfigComplete) {
         console.log('[Discourse Saver→飞书] 检测到飞书配置，开始同步...');
+        // V4.0.6: 显示保存中提示（特别是只启用飞书时，让用户知道操作正在进行）
+        showNotification('正在保存到飞书...', 'info');
 
         // V3.5.5: 统一清理URL，移除查询参数和锚点，确保URL一致性
         // 先清理基础URL
@@ -1507,15 +1510,20 @@
         }, (response) => {
           if (chrome.runtime.lastError) {
             console.error('[Discourse Saver→飞书] 发送消息失败:', chrome.runtime.lastError);
+            showNotification('飞书保存失败: 扩展通信错误', 'error');
             return;
           }
 
           if (response && response.success) {
             const actionText = response.action === 'updated' ? '已更新' : '已保存';
             showNotification(`飞书${actionText}成功`, 'success');
-          } else if (response) {
+          } else if (response && response.error) {
             console.error('[Discourse Saver→飞书] 保存失败:', response.error);
             showNotification('飞书保存失败: ' + response.error, 'error');
+          } else {
+            // V4.0.6: 处理未知响应情况
+            console.error('[Discourse Saver→飞书] 未收到有效响应');
+            showNotification('飞书保存失败: 未知错误', 'error');
           }
         });
       }
@@ -1527,6 +1535,8 @@
 
       if (notionConfigComplete) {
         console.log('[Discourse Saver→Notion] 检测到 Notion 配置，开始同步...');
+        // V4.0.6: 显示保存中提示
+        showNotification('正在保存到 Notion...', 'info');
 
         // 清理URL，移除查询参数和锚点
         let cleanNotionUrl = url.replace(/#.*$/, '').replace(/\?.*$/, '');
@@ -1573,14 +1583,19 @@
         }, (response) => {
           if (chrome.runtime.lastError) {
             console.error('[Discourse Saver→Notion] 发送消息失败:', chrome.runtime.lastError);
+            showNotification('Notion 保存失败: 扩展通信错误', 'error');
             return;
           }
 
           if (response && response.success) {
             showNotification('Notion 保存成功', 'success');
-          } else if (response) {
+          } else if (response && response.error) {
             console.error('[Discourse Saver→Notion] 保存失败:', response.error);
             showNotification('Notion 保存失败: ' + response.error, 'error');
+          } else {
+            // V4.0.6: 处理未知响应情况
+            console.error('[Discourse Saver→Notion] 未收到有效响应');
+            showNotification('Notion 保存失败: 未知错误', 'error');
           }
         });
       }

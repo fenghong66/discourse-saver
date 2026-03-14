@@ -1,4 +1,4 @@
-// Discourse Saver - Background Script V4.0.5
+// Discourse Saver - Background Script V4.2.1
 // 处理飞书/Notion API请求（解决CORS问题）+ 动态脚本注入
 // V3.5: 支持上传MD文件作为附件
 // V3.5.2: 支持飞书国内版和Lark国际版
@@ -19,6 +19,125 @@ const API_DOMAINS = {
   feishu: 'https://open.feishu.cn',
   lark: 'https://open.larksuite.com'
 };
+
+// 飞书多行文本字段限制
+const FEISHU_TEXT_FIELD_LIMIT = 100000;
+
+// 值得保留的链接域名（视频、代码仓库、论坛等）
+const VALUABLE_LINK_DOMAINS = [
+  // Discourse 论坛
+  'linux.do',
+  'meta.discourse.org',
+  'community.openai.com',
+  'forum.cursor.com',
+  'discuss.pytorch.org',
+  'discuss.tensorflow.org',
+  'forum.obsidian.md',
+  'forum.affinity.serif.com',
+  // 视频平台
+  'youtube.com', 'youtu.be', 'www.youtube.com',
+  'bilibili.com', 'www.bilibili.com', 'b23.tv',
+  'vimeo.com', 'www.vimeo.com',
+  'youku.com', 'v.youku.com',
+  'iqiyi.com', 'www.iqiyi.com',
+  'qq.com', 'v.qq.com',
+  'douyin.com', 'www.douyin.com',
+  'tiktok.com', 'www.tiktok.com',
+  'ixigua.com', 'www.ixigua.com',
+  // 代码仓库
+  'github.com', 'www.github.com',
+  'gitlab.com', 'www.gitlab.com',
+  'gitee.com', 'www.gitee.com',
+  'bitbucket.org', 'www.bitbucket.org',
+  'codeberg.org',
+  'sr.ht',
+  // 技术文档/问答
+  'stackoverflow.com', 'www.stackoverflow.com',
+  'gist.github.com',
+  'codesandbox.io',
+  'codepen.io',
+  'jsfiddle.net',
+  'replit.com',
+  // 其他有价值的链接
+  'huggingface.co',
+  'kaggle.com', 'www.kaggle.com',
+  'arxiv.org',
+  'doi.org'
+];
+
+// 检查URL是否为值得保留的链接
+function isValuableLink(url) {
+  try {
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname.toLowerCase();
+    return VALUABLE_LINK_DOMAINS.some(domain =>
+      hostname === domain || hostname.endsWith('.' + domain)
+    );
+  } catch {
+    return false;
+  }
+}
+
+// 清理和验证飞书多行文本内容
+function sanitizeFeishuTextContent(content) {
+  if (!content || typeof content !== 'string') {
+    return '';
+  }
+
+  // 1. 移除不可见控制字符（保留换行、回车和制表符）
+  let sanitized = content.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+
+  // 2. 移除 Unicode 特殊字符（如零宽字符、特殊换行符）
+  sanitized = sanitized.replace(/[\u200B-\u200D\uFEFF\u2028\u2029]/g, '');
+
+  // 3. 标准化换行符（将 \r\n 或 \r 统一为 \n）
+  sanitized = sanitized.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+  // 4. 移除图片链接（太占空间），只保留alt文本
+  sanitized = sanitized.replace(/!\[([^\]]*)\]\([^)]+\)/g, (match, alt) => {
+    // 如果有alt文本，显示为 [图片: alt]，否则直接移除
+    const cleanAlt = alt.trim();
+    return cleanAlt ? `[图片: ${cleanAlt}]` : '';
+  });
+
+  // 5. 处理普通链接 - 只保留有价值的链接
+  sanitized = sanitized.replace(/\[([^\]]*)\]\(([^)]+)\)/g, (match, text, url) => {
+    const cleanUrl = url.trim();
+    const cleanText = text.trim();
+
+    if (isValuableLink(cleanUrl)) {
+      // 有价值的链接：保留文本和URL
+      return cleanText ? `${cleanText}: ${cleanUrl}` : cleanUrl;
+    } else {
+      // 普通链接：只保留文本
+      return cleanText || '';
+    }
+  });
+
+  // 6. 处理裸链接（没有markdown格式的URL）
+  sanitized = sanitized.replace(/(?<![(\[])(https?:\/\/[^\s\[\]()]+)(?![)\]])/g, (match, url) => {
+    if (isValuableLink(url)) {
+      return url; // 保留有价值的链接
+    } else {
+      return ''; // 移除其他链接
+    }
+  });
+
+  // 7. 移除连续多个换行（保留最多2个）
+  sanitized = sanitized.replace(/\n{3,}/g, '\n\n');
+
+  // 8. 移除多余的空格
+  sanitized = sanitized.replace(/[ \t]+/g, ' ');
+  sanitized = sanitized.replace(/^ +| +$/gm, '');
+
+  // 9. 检查长度限制
+  if (sanitized.length > FEISHU_TEXT_FIELD_LIMIT) {
+    console.warn(`[Discourse Saver→飞书] 内容超过${FEISHU_TEXT_FIELD_LIMIT}字符限制，当前${sanitized.length}字符，将截断`);
+    sanitized = sanitized.substring(0, FEISHU_TEXT_FIELD_LIMIT - 100) + '\n\n... (内容过长，已截断)';
+  }
+
+  return sanitized;
+}
 
 // 获取 API 基础 URL
 function getApiBaseUrl(apiDomain) {
@@ -118,6 +237,14 @@ const FEISHU_ERROR_CODES = {
   1254018: {
     msg: '字段值格式错误',
     hint: '请检查多维表格的字段类型配置是否正确'
+  },
+  1254060: {
+    msg: '多行文本字段格式错误',
+    hint: '正文内容格式不正确，可能的原因：\n' +
+          '1. 内容超过10万字符限制\n' +
+          '2. 内容包含不支持的特殊字符\n' +
+          '3.「正文」字段类型不是「多行文本」\n\n' +
+          '请检查多维表格中「正文」字段的类型是否为「多行文本」'
   },
 
   // 应用状态相关
@@ -469,14 +596,28 @@ async function saveToFeishu(config, postData) {
       console.log('[Discourse Saver→飞书] MD附件上传成功');
     } catch (uploadError) {
       console.warn('[Discourse Saver→飞书] MD文件上传失败，改为保存文本:', uploadError.message);
-      fields['正文'] = postData.content;
+      const sanitizedContent = sanitizeFeishuTextContent(postData.content);
+      console.log('[Discourse Saver→飞书] 正文内容长度:', sanitizedContent.length);
+      fields['正文'] = sanitizedContent;
     }
   } else {
     // 不上传附件，直接保存文本
-    fields['正文'] = postData.content;
+    const sanitizedContent = sanitizeFeishuTextContent(postData.content);
+    console.log('[Discourse Saver→飞书] 正文内容长度:', sanitizedContent.length);
+    fields['正文'] = sanitizedContent;
   }
 
   const record = { fields };
+
+  // 调试：打印请求体信息
+  console.log('[Discourse Saver→飞书] 请求字段:', Object.keys(fields));
+  if (fields['正文']) {
+    const contentPreview = fields['正文'].substring(0, 200);
+    console.log('[Discourse Saver→飞书] 正文预览:', contentPreview);
+    // 检查是否包含图片
+    const imageCount = (fields['正文'].match(/!\[.*?\]\(.*?\)/g) || []).length;
+    console.log('[Discourse Saver→飞书] 图片数量:', imageCount);
+  }
 
   // 调用飞书API新增记录
   const baseUrl = getApiBaseUrl(domain);
@@ -484,13 +625,15 @@ async function saveToFeishu(config, postData) {
 
   let response;
   try {
+    const requestBody = JSON.stringify(record);
+    console.log('[Discourse Saver→飞书] 请求体大小:', requestBody.length, '字节');
     response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
       },
-      body: JSON.stringify(record)
+      body: requestBody
     });
   } catch (fetchError) {
     throw new Error(`网络连接失败\n\n💡 请检查网络连接后重试\n\n原始错误：${fetchError.message}`);
@@ -499,6 +642,7 @@ async function saveToFeishu(config, postData) {
   const data = await safeParseJson(response, '保存记录');
 
   if (data.code !== 0) {
+    console.error('[Discourse Saver→飞书] API返回错误:', data);
     throw new Error(parseFeishuError(data.code, data.msg, '保存记录'));
   }
 
@@ -683,10 +827,14 @@ async function updateFeishuRecord(config, recordId, postData) {
       console.log('[Discourse Saver→飞书] MD附件更新成功');
     } catch (uploadError) {
       console.warn('[Discourse Saver→飞书] MD文件上传失败，改为保存文本:', uploadError.message);
-      fields['正文'] = postData.content;
+      const sanitizedContent = sanitizeFeishuTextContent(postData.content);
+      console.log('[Discourse Saver→飞书] 更新正文内容长度:', sanitizedContent.length);
+      fields['正文'] = sanitizedContent;
     }
   } else {
-    fields['正文'] = postData.content;
+    const sanitizedContent = sanitizeFeishuTextContent(postData.content);
+    console.log('[Discourse Saver→飞书] 更新正文内容长度:', sanitizedContent.length);
+    fields['正文'] = sanitizedContent;
   }
 
   const record = { fields };
@@ -1632,4 +1780,4 @@ function getFieldTypeName(typeCode) {
   return typeNames[typeCode] || `未知类型(${typeCode})`;
 }
 
-console.log('[Discourse Saver] Background script 已加载 (V4.0.2)');
+console.log('[Discourse Saver] Background script 已加载 (V4.2.1)');
