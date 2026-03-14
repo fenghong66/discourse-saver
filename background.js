@@ -1062,6 +1062,26 @@ async function updateNotionPage(token, pageId, pageData) {
 function preprocessMarkdownText(text) {
   let processed = text;
 
+  // 0. 处理 Discourse 风格的 admonition 块
+  // 格式: > **warning**\n> 内容\n> 更多内容
+  // 转换为: > [!WARNING] 内容 更多内容
+  const admonitionTypes = ['warning', 'note', 'info', 'tip', 'important', 'caution', 'danger', 'success'];
+  const admonitionRegex = new RegExp(
+    `^>\\s*\\*\\*(${admonitionTypes.join('|')})\\*\\*\\s*$([\\s\\S]*?)(?=^(?!>)|$)`,
+    'gmi'
+  );
+  processed = processed.replace(admonitionRegex, (match, type, content) => {
+    // 提取所有引用行的内容
+    const lines = content.split('\n')
+      .filter(line => line.trim().startsWith('>') || line.trim() === '')
+      .map(line => line.replace(/^>\s*/, '').trim())
+      .filter(line => line !== '');
+    const combinedContent = lines.join(' ');
+    // 转换为标准格式
+    const normalizedType = type.toUpperCase();
+    return `> [!${normalizedType}] ${combinedContent}`;
+  });
+
   // 1. 处理图片链接 [![alt](img-url)](link-url) -> [alt](link-url)
   // 这种格式是可点击的图片，转换为普通链接
   processed = processed.replace(/\[!\[([^\]]*)\]\([^)]+\)\]\((https?:\/\/[^)]+)\)/g, '[$1]($2)');
@@ -1470,10 +1490,11 @@ function buildNotionPageData(postData, config) {
               }
             });
           }
-        } else if (/^>\s*\[!(WARNING|NOTE|TIP|IMPORTANT|CAUTION)\]/i.test(trimmedLine) || /^>\s*[⚠️📝💡❗⛔🔔]/u.test(trimmedLine)) {
+        } else if (/^>\s*\[!(WARNING|NOTE|TIP|IMPORTANT|CAUTION|INFO|DANGER|SUCCESS)\]/i.test(trimmedLine) || /^>\s*[⚠️📝💡❗⛔🔔✅ℹ️]/u.test(trimmedLine)) {
           // V4.2.3: 警告/提示框转为 Notion callout 块（带背景色）
-          const calloutMatch = trimmedLine.match(/^>\s*\[!(WARNING|NOTE|TIP|IMPORTANT|CAUTION)\]\s*(.*)/i);
-          const emojiMatch = trimmedLine.match(/^>\s*([⚠️📝💡❗⛔🔔])\s*(.*)/u);
+          // 支持 Discourse 风格: > **warning** 和 GitHub 风格: > [!WARNING]
+          const calloutMatch = trimmedLine.match(/^>\s*\[!(WARNING|NOTE|TIP|IMPORTANT|CAUTION|INFO|DANGER|SUCCESS)\]\s*(.*)/i);
+          const emojiMatch = trimmedLine.match(/^>\s*([⚠️📝💡❗⛔🔔✅ℹ️])\s*(.*)/u);
 
           let emoji = '💡';
           let color = 'gray_background';
@@ -1482,32 +1503,36 @@ function buildNotionPageData(postData, config) {
           if (calloutMatch) {
             const type = calloutMatch[1].toUpperCase();
             content = calloutMatch[2] || '';
-            // 根据类型设置 emoji 和背景色
-            if (type === 'WARNING') {
-              emoji = '⚠️';
-              color = 'yellow_background';
-            } else if (type === 'NOTE') {
-              emoji = '📝';
-              color = 'blue_background';
-            } else if (type === 'TIP') {
-              emoji = '💡';
-              color = 'green_background';
-            } else if (type === 'IMPORTANT') {
-              emoji = '❗';
-              color = 'red_background';
-            } else if (type === 'CAUTION') {
-              emoji = '⛔';
-              color = 'orange_background';
+            // 根据类型设置 emoji 和背景色（Discourse + GitHub 风格）
+            const typeConfig = {
+              'WARNING': { emoji: '⚠️', color: 'yellow_background' },
+              'NOTE': { emoji: '📝', color: 'blue_background' },
+              'TIP': { emoji: '💡', color: 'green_background' },
+              'IMPORTANT': { emoji: '❗', color: 'red_background' },
+              'CAUTION': { emoji: '⛔', color: 'orange_background' },
+              'INFO': { emoji: 'ℹ️', color: 'blue_background' },
+              'DANGER': { emoji: '🚨', color: 'red_background' },
+              'SUCCESS': { emoji: '✅', color: 'green_background' }
+            };
+            if (typeConfig[type]) {
+              emoji = typeConfig[type].emoji;
+              color = typeConfig[type].color;
             }
           } else if (emojiMatch) {
             emoji = emojiMatch[1];
             content = emojiMatch[2] || '';
             // 根据 emoji 设置背景色
-            if (emoji === '⚠️') color = 'yellow_background';
-            else if (emoji === '📝') color = 'blue_background';
-            else if (emoji === '💡') color = 'green_background';
-            else if (emoji === '❗') color = 'red_background';
-            else if (emoji === '⛔') color = 'orange_background';
+            const emojiConfig = {
+              '⚠️': 'yellow_background',
+              '📝': 'blue_background',
+              '💡': 'green_background',
+              '❗': 'red_background',
+              '⛔': 'orange_background',
+              '✅': 'green_background',
+              'ℹ️': 'blue_background',
+              '🔔': 'yellow_background'
+            };
+            color = emojiConfig[emoji] || 'gray_background';
           }
 
           children.push({
