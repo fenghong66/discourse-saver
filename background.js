@@ -286,8 +286,8 @@ const NOTION_ERROR_CODES = {
   401: {
     msg: 'Integration Token 无效',
     hint: 'Token 错误或已过期，请在 Notion Settings → Integrations 中重新获取\n\n' +
-          '📌 Token 格式：secret_xxxxxxxxxxxxxxxx\n' +
-          '⚠️ 注意：Token 必须以 secret_ 开头'
+          '📌 Token 格式：ntn_xxx 或 secret_xxx\n' +
+          '⚠️ 注意：2024年9月后创建的 Token 以 ntn_ 开头'
   },
   403: {
     msg: '无权限访问该 Database',
@@ -877,8 +877,8 @@ function validateNotionConfig(config) {
   // 检查 Token
   if (!config.notionToken || !config.notionToken.trim()) {
     errors.push('Integration Token 不能为空');
-  } else if (!config.notionToken.trim().startsWith('secret_')) {
-    errors.push('Integration Token 格式错误（应以 secret_ 开头）');
+  } else if (!config.notionToken.trim().startsWith('secret_') && !config.notionToken.trim().startsWith('ntn_')) {
+    errors.push('Integration Token 格式错误（应以 secret_ 或 ntn_ 开头）');
   } else if (config.notionToken.trim().length < 20) {
     errors.push('Integration Token 长度不正确');
   }

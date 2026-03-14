@@ -394,8 +394,8 @@ function saveOptions(e) {
       showStatus('请填写 Notion Integration Token', 'error');
       return;
     }
-    if (!config.notionToken.startsWith('secret_')) {
-      showStatus('Integration Token 格式错误（应以 secret_ 开头）', 'error');
+    if (!config.notionToken.startsWith('secret_') && !config.notionToken.startsWith('ntn_')) {
+      showStatus('Integration Token 格式错误（应以 secret_ 或 ntn_ 开头）', 'error');
       return;
     }
     if (!config.notionDatabaseId) {
@@ -519,8 +519,8 @@ async function testNotionConnection() {
     return;
   }
 
-  if (!config.notionToken.startsWith('secret_')) {
-    showStatus('Integration Token 格式错误（应以 secret_ 开头）', 'error');
+  if (!config.notionToken.startsWith('secret_') && !config.notionToken.startsWith('ntn_')) {
+    showStatus('Integration Token 格式错误（应以 secret_ 或 ntn_ 开头）', 'error');
     btn.textContent = originalText;
     btn.disabled = false;
     return;

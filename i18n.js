@@ -80,8 +80,8 @@ const i18n = {
     },
     notion: {
       token: 'Integration Token',
-      tokenPlaceholder: 'secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-      tokenHelp: '以 secret_ 开头，从 Notion Integration 页面获取',
+      tokenPlaceholder: 'ntn_xxx 或 secret_xxx',
+      tokenHelp: '以 ntn_ 或 secret_ 开头，从 Notion Integration 页面获取',
       tokenHelpPre: '在',
       tokenHelpPost: '创建获取',
       detailedGuide: '详细教程',
@@ -271,8 +271,8 @@ const i18n = {
     },
     notion: {
       token: 'Integration Token',
-      tokenPlaceholder: 'secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-      tokenHelp: 'Starts with secret_, get from Notion Integration page',
+      tokenPlaceholder: 'ntn_xxx or secret_xxx',
+      tokenHelp: 'Starts with ntn_ or secret_, get from Notion Integration page',
       tokenHelpPre: 'Create at',
       tokenHelpPost: 'to get token',
       detailedGuide: 'Detailed Guide',
