@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discourse Saver (油猴版)
 // @namespace    https://github.com/discourse-saver
-// @version      4.6.6
+// @version      4.6.7
 // @description  通用Discourse论坛内容保存工具 - 支持Obsidian/Notion/HTML，评论、用户名超链接、折叠模式
 // @author       阿成
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=obsidian.md
@@ -1785,7 +1785,17 @@ ${tagsYaml}
         obsidianUrl = `obsidian://new?${parts.join('&')}`;
       }
 
-      window.open(obsidianUrl, '_self');
+      // 打开 Obsidian URI（使用 iframe 方式避免页面跳转）
+      const iframe = document.createElement('iframe');
+      iframe.style.display = 'none';
+      iframe.src = obsidianUrl;
+      document.body.appendChild(iframe);
+      // 清理 iframe
+      setTimeout(() => {
+        if (iframe.parentNode) {
+          iframe.parentNode.removeChild(iframe);
+        }
+      }, 1000);
       return true;
     }
 
@@ -2781,10 +2791,24 @@ ${tagsYaml}
           }
         });
 
-        // 显示中间结果（如果有非 Obsidian 任务完成）
+        // 执行 Obsidian 保存（如果需要）
+        if (shouldSaveToObsidian) {
+          // 给其他任务一个短暂的时间确保完成
+          await new Promise(resolve => setTimeout(resolve, 300));
+
+          try {
+            await sendToObsidian(markdown, fileName, config);
+            succeeded.push('Obsidian');
+          } catch (e) {
+            failed.push({ target: 'Obsidian', error: e.message });
+            console.error('[Discourse Saver] Obsidian 保存失败:', e);
+          }
+        }
+
+        // 显示最终结果（所有任务完成后）
         const commentInfo = comments.length > 0 ? `（含${comments.length}条评论）` : '';
 
-        if (succeeded.length > 0 && !shouldSaveToObsidian) {
+        if (succeeded.length > 0) {
           if (failed.length === 0) {
             UtilModule.showNotification(`已保存到 ${succeeded.join('、')}${commentInfo}`, 'success');
           } else {
@@ -2793,31 +2817,8 @@ ${tagsYaml}
               'warning'
             );
           }
-        } else if (failed.length > 0 && !shouldSaveToObsidian) {
+        } else if (failed.length > 0) {
           UtilModule.showNotification(`${failed.map(f => f.target).join('、')} 保存失败`, 'error');
-        }
-
-        // 最后执行 Obsidian 保存（会跳转页面）
-        if (shouldSaveToObsidian) {
-          // 给其他任务一个短暂的时间确保完成
-          await new Promise(resolve => setTimeout(resolve, 300));
-
-          try {
-            // 显示即将跳转提示
-            if (succeeded.length > 0 || failed.length > 0) {
-              const msg = succeeded.length > 0
-                ? `${succeeded.join('、')} 已完成，正在跳转到 Obsidian...`
-                : `正在跳转到 Obsidian...`;
-              UtilModule.showNotification(msg, 'info');
-              await new Promise(resolve => setTimeout(resolve, 500));
-            }
-
-            await sendToObsidian(markdown, fileName, config);
-            succeeded.push('Obsidian');
-          } catch (e) {
-            failed.push({ target: 'Obsidian', error: e.message });
-            console.error('[Discourse Saver] Obsidian 保存失败:', e);
-          }
         }
 
         return { succeeded, failed };
@@ -3139,7 +3140,7 @@ ${tagsYaml}
       overlay.className = 'ds-settings-overlay';
       overlay.innerHTML = `
         <div class="ds-settings-panel">
-          <h2>📝 Discourse Saver 设置 (V4.6.6)</h2>
+          <h2>📝 Discourse Saver 设置 (V4.6.7)</h2>
 
           <div class="ds-section-title">自定义站点</div>
 
