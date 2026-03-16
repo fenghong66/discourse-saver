@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discourse Saver (油猴版)
 // @namespace    https://github.com/discourse-saver
-// @version      4.5.1
+// @version      4.5.3
 // @description  通用Discourse论坛内容保存工具 - 支持Obsidian/Notion/HTML，评论、用户名超链接、折叠模式
 // @author       Discourse Saver Team
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=obsidian.md
@@ -177,8 +177,15 @@
       setTimeout(() => div.remove(), 3000);
     }
 
-    // 下载图片并转换为 Base64
-    function fetchImageAsBase64(url) {
+    // 图片嵌入限制常量
+    const IMAGE_LIMITS = {
+      MAX_SINGLE_SIZE: 5 * 1024 * 1024,     // 单张图片最大 5MB
+      MAX_TOTAL_SIZE: 50 * 1024 * 1024,     // 总大小最大 50MB
+      MAX_IMAGE_COUNT: 50                    // 最多嵌入 50 张图片
+    };
+
+    // 下载图片并转换为 Base64（带大小检测）
+    function fetchImageAsBase64(url, maxSize = IMAGE_LIMITS.MAX_SINGLE_SIZE) {
       return new Promise((resolve, reject) => {
         GM_xmlhttpRequest({
           method: 'GET',
@@ -188,8 +195,18 @@
           onload: function(response) {
             if (response.status >= 200 && response.status < 300) {
               const blob = response.response;
+
+              // 检查图片大小
+              if (blob.size > maxSize) {
+                reject(new Error(`图片过大 (${(blob.size/1024/1024).toFixed(1)}MB > ${(maxSize/1024/1024).toFixed(0)}MB限制)`));
+                return;
+              }
+
               const reader = new FileReader();
-              reader.onloadend = () => resolve(reader.result);
+              reader.onloadend = () => resolve({
+                data: reader.result,
+                size: blob.size
+              });
               reader.onerror = () => reject(new Error('Failed to read blob'));
               reader.readAsDataURL(blob);
             } else {
@@ -208,55 +225,126 @@
 
     // 批量将 Markdown 中的图片 URL 替换为 Base64
     async function embedImagesInMarkdown(markdown, onProgress = null) {
+      // 参数验证
+      if (!markdown || typeof markdown !== 'string') {
+        console.warn('[Discourse Saver] embedImagesInMarkdown: 无效的 markdown 参数');
+        return markdown || '';
+      }
+
       // 匹配 Markdown 图片语法: ![alt](url)
       const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
-      const matches = [...markdown.matchAll(imageRegex)];
+      let matches;
+      try {
+        matches = [...markdown.matchAll(imageRegex)];
+      } catch (regexError) {
+        console.error('[Discourse Saver] 正则匹配失败:', regexError);
+        return markdown;
+      }
 
       if (matches.length === 0) {
         return markdown;
       }
 
-      console.log(`[Discourse Saver] 开始嵌入 ${matches.length} 张图片...`);
+      console.log(`[Discourse Saver] 发现 ${matches.length} 张图片`);
 
       // 收集所有图片 URL（去重）
-      const urlMap = new Map();
+      const urlList = [];
+      const seenUrls = new Set();
       for (const match of matches) {
         const url = match[2];
-        // 跳过已经是 base64 的图片
-        if (!url.startsWith('data:')) {
-          urlMap.set(url, null);
+        // 跳过已经是 base64 的图片和无效 URL
+        if (url && !url.startsWith('data:') && url.startsWith('http') && !seenUrls.has(url)) {
+          seenUrls.add(url);
+          urlList.push(url);
         }
       }
 
-      // 并行下载所有图片
-      const urls = [...urlMap.keys()];
-      let completed = 0;
-      const total = urls.length;
+      if (urlList.length === 0) {
+        console.log('[Discourse Saver] 没有需要嵌入的图片');
+        return markdown;
+      }
 
-      await Promise.all(urls.map(async (url) => {
-        try {
-          const base64 = await fetchImageAsBase64(url);
-          urlMap.set(url, base64);
-          completed++;
-          if (onProgress) {
-            onProgress(completed, total);
-          }
-          console.log(`[Discourse Saver] 图片嵌入 ${completed}/${total}: ${url.substring(0, 50)}...`);
-        } catch (error) {
-          console.warn(`[Discourse Saver] 图片下载失败: ${url}`, error.message);
-          // 保留原始 URL
-          urlMap.set(url, null);
-          completed++;
-        }
-      }));
+      // 应用图片数量限制
+      const effectiveUrls = urlList.slice(0, IMAGE_LIMITS.MAX_IMAGE_COUNT);
+      if (urlList.length > IMAGE_LIMITS.MAX_IMAGE_COUNT) {
+        console.warn(`[Discourse Saver] 图片数量 (${urlList.length}) 超过限制 (${IMAGE_LIMITS.MAX_IMAGE_COUNT})，只嵌入前 ${IMAGE_LIMITS.MAX_IMAGE_COUNT} 张`);
+        showNotification(`图片过多，只嵌入前 ${IMAGE_LIMITS.MAX_IMAGE_COUNT} 张`, 'warning');
+      }
+
+      console.log(`[Discourse Saver] 开始嵌入 ${effectiveUrls.length} 张图片...`);
+
+      // 用于存储结果和追踪总大小
+      const urlMap = new Map();
+      let totalSize = 0;
+      let completed = 0;
+      let skippedCount = 0;
+      const total = effectiveUrls.length;
+      const OVERALL_TIMEOUT = 180000; // 3分钟总超时（增加到3分钟以支持更多图片）
+
+      try {
+        await Promise.race([
+          Promise.all(effectiveUrls.map(async (url) => {
+            try {
+              // 检查是否已超过总大小限制
+              if (totalSize >= IMAGE_LIMITS.MAX_TOTAL_SIZE) {
+                console.warn(`[Discourse Saver] 总大小已达限制，跳过: ${url.substring(0, 50)}...`);
+                urlMap.set(url, null);
+                skippedCount++;
+                completed++;
+                if (onProgress) onProgress(completed, total);
+                return;
+              }
+
+              const result = await fetchImageAsBase64(url);
+              const imageSize = result.size;
+
+              // 检查添加此图片后是否超过总大小限制
+              if (totalSize + imageSize > IMAGE_LIMITS.MAX_TOTAL_SIZE) {
+                console.warn(`[Discourse Saver] 添加此图片将超过总大小限制，跳过 (${(imageSize/1024/1024).toFixed(1)}MB)`);
+                urlMap.set(url, null);
+                skippedCount++;
+              } else {
+                urlMap.set(url, result.data);
+                totalSize += imageSize;
+                console.log(`[Discourse Saver] 图片嵌入 ${completed+1}/${total}: ${(imageSize/1024).toFixed(0)}KB, 总计: ${(totalSize/1024/1024).toFixed(1)}MB`);
+              }
+
+              completed++;
+              if (onProgress) onProgress(completed, total);
+            } catch (error) {
+              console.warn(`[Discourse Saver] 图片下载失败: ${url}`, error.message);
+              urlMap.set(url, null);
+              skippedCount++;
+              completed++;
+              if (onProgress) onProgress(completed, total);
+            }
+          })),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('图片嵌入总超时')), OVERALL_TIMEOUT)
+          )
+        ]);
+      } catch (timeoutError) {
+        console.warn('[Discourse Saver] 图片嵌入超时，部分图片可能未嵌入:', timeoutError.message);
+      }
 
       // 替换 Markdown 中的图片 URL
       let result = markdown;
-      for (const [url, base64] of urlMap.entries()) {
-        if (base64) {
-          // 使用全局替换，因为同一图片可能多次出现
-          result = result.split(`](${url})`).join(`](${base64})`);
+      try {
+        for (const [url, base64] of urlMap.entries()) {
+          if (base64 && typeof base64 === 'string') {
+            result = result.split(`](${url})`).join(`](${base64})`);
+          }
         }
+      } catch (replaceError) {
+        console.error('[Discourse Saver] 图片 URL 替换失败:', replaceError);
+        return markdown;
+      }
+
+      const successCount = [...urlMap.values()].filter(v => v !== null).length;
+      console.log(`[Discourse Saver] 图片嵌入完成: ${successCount}/${total} 成功, ${skippedCount} 跳过, 总大小: ${(totalSize/1024/1024).toFixed(1)}MB`);
+
+      if (skippedCount > 0) {
+        showNotification(`已嵌入 ${successCount} 张图片，${skippedCount} 张因过大或超限跳过`, 'info');
       }
 
       return result;
@@ -1253,10 +1341,22 @@ ${tagsYaml}
 
       // 如果启用了图片嵌入，将图片转换为 Base64
       if (config.embedImages) {
-        UtilModule.showNotification('正在嵌入图片（可能需要一些时间）...', 'info');
-        markdown = await UtilModule.embedImagesInMarkdown(markdown, (completed, total) => {
-          UtilModule.showNotification(`正在嵌入图片 ${completed}/${total}...`, 'info');
-        });
+        try {
+          UtilModule.showNotification('正在嵌入图片（可能需要一些时间）...', 'info');
+          const originalMarkdown = markdown;  // 保存原始内容以防出错
+          markdown = await UtilModule.embedImagesInMarkdown(markdown, (completed, total) => {
+            UtilModule.showNotification(`正在嵌入图片 ${completed}/${total}...`, 'info');
+          });
+          // 检查结果是否有效
+          if (!markdown || markdown.length === 0) {
+            console.warn('[Discourse Saver] 图片嵌入返回空结果，使用原始内容');
+            markdown = originalMarkdown;
+          }
+        } catch (embedError) {
+          console.error('[Discourse Saver] 图片嵌入失败，使用原始内容:', embedError);
+          UtilModule.showNotification('图片嵌入失败，将使用原始图片链接', 'warning');
+          // markdown 保持原值，不影响后续保存
+        }
       }
 
       let fileName = UtilModule.sanitizeFileName(title);
@@ -1759,7 +1859,7 @@ ${tagsYaml}
       overlay.className = 'ds-settings-overlay';
       overlay.innerHTML = `
         <div class="ds-settings-panel">
-          <h2>📝 Discourse Saver 设置 (V4.5.1)</h2>
+          <h2>📝 Discourse Saver 设置 (V4.5.3)</h2>
 
           <div class="ds-section-title">保存目标</div>
 
@@ -1990,7 +2090,7 @@ ${tagsYaml}
       GM_registerMenuCommand('📑 仅保存到 Notion', () => SaveModule.saveToNotionOnly(null));
       GM_registerMenuCommand('📄 仅导出为 HTML', () => SaveModule.exportHtmlOnly(null));
 
-      console.log('[Discourse Saver] 油猴脚本已加载 (V4.5.1)');
+      console.log('[Discourse Saver] 油猴脚本已加载 (V4.5.3)');
     }
 
     return { init, showSettingsPanel };
