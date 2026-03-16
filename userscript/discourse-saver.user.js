@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discourse Saver (油猴版)
 // @namespace    https://github.com/discourse-saver
-// @version      4.6.3
+// @version      4.6.4
 // @description  通用Discourse论坛内容保存工具 - 支持Obsidian/Notion/HTML，评论、用户名超链接、折叠模式
 // @author       阿成
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=obsidian.md
@@ -1246,7 +1246,7 @@
       if (ytMatch) {
         return { embedUrl: 'https://www.youtube.com/embed/' + ytMatch[1], isVideo: true, platform: 'youtube' };
       }
-      // Bilibili
+      // Bilibili（包含 b23.tv 短链 - 返回原链接让用户点击跳转）
       const biliMatch = href.match(/bilibili\.com\/video\/(BV[a-zA-Z0-9]+|av\d+)/i);
       if (biliMatch) {
         const vid = biliMatch[1];
@@ -1255,6 +1255,10 @@
         } else {
           return { embedUrl: '//player.bilibili.com/player.html?aid=' + vid.replace(/^av/i, ''), isVideo: true, platform: 'bilibili' };
         }
+      }
+      // b23.tv 短链（Bilibili）- 无法直接解析，作为视频链接显示
+      if (/b23\.tv/i.test(href)) {
+        return { embedUrl: '', isVideo: true, platform: 'bilibili-short', originalUrl: href };
       }
       // Vimeo
       const vimeoMatch = href.match(/vimeo\.com\/(\d+)/);
@@ -1307,6 +1311,10 @@
     function generateVideoEmbed(videoInfo, originalUrl) {
       if (videoInfo.embedUrl) {
         return '\n\n<div style="position:relative;width:100%;padding-bottom:56.25%;"><iframe src="' + videoInfo.embedUrl + '" style="position:absolute;top:0;left:0;width:100%;height:100%;border:none;" allowfullscreen></iframe></div>\n\n';
+      }
+      // 无法嵌入的视频链接（如 b23.tv 短链），使用视频图标显示
+      if (videoInfo.isVideo) {
+        return '\n\n> 🎬 **视频链接**: [点击观看](' + originalUrl + ')\n\n';
       }
       return '\n\n' + originalUrl + '\n\n';
     }
@@ -2283,7 +2291,7 @@ ${tagsYaml}
         if (/pan\.baidu\.com|yun\.baidu\.com/i.test(url)) return '百度网盘';
         if (/pan\.quark\.cn/i.test(url)) return '夸克网盘';
         if (/123pan\.com/i.test(url)) return '123云盘';
-        if (/lanzou/i.test(url)) return '蓝奏云';
+        if (/lanzou[a-z]*\.(com|cn)|lanzoui\.com|lanzoux\.com/i.test(url)) return '蓝奏云';
         if (/aliyundrive\.com|alipan\.com/i.test(url)) return '阿里云盘';
         if (/cloud\.189\.cn/i.test(url)) return '天翼云盘';
         return '网盘';
