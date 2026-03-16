@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discourse Saver (油猴版)
 // @namespace    https://github.com/discourse-saver
-// @version      4.6.4
+// @version      4.6.5
 // @description  通用Discourse论坛内容保存工具 - 支持Obsidian/Notion/HTML，评论、用户名超链接、折叠模式
 // @author       阿成
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=obsidian.md
@@ -110,7 +110,10 @@
       // 楼层范围（与 saveAllComments 互斥）
       useFloorRange: false,
       floorFrom: 1,
-      floorTo: 100
+      floorTo: 100,
+
+      // 自定义站点（逗号分隔的域名列表，用于检测不到的自建 Discourse）
+      customSites: ''
     };
 
     function get(key) {
@@ -383,8 +386,18 @@
   // 模块3: 内容提取 (ExtractModule)
   // ============================================================
   const ExtractModule = (function() {
-    // 检测是否是 Discourse 论坛 - v4.5.10 增强版
+    // 检测是否是 Discourse 论坛 - v4.6.5 增强版（支持自定义站点）
     function isDiscourseForumPage() {
+      // 首先检查自定义站点列表
+      const config = ConfigModule.get();
+      const customSites = (config.customSites || '').split(',').map(s => s.trim().toLowerCase()).filter(s => s);
+      const currentHost = window.location.hostname.toLowerCase();
+
+      if (customSites.some(site => currentHost.includes(site) || site.includes(currentHost))) {
+        console.log('[Discourse Saver] 匹配自定义站点:', currentHost);
+        return true;
+      }
+
       // 多种检测方式
       const checks = [
         // 检查 Discourse 特有的 meta 标签
@@ -2005,20 +2018,25 @@ ${tagsYaml}
         });
       });
 
-      // 删除每个旧块
-      for (const block of existingBlocks) {
-        await new Promise((resolve) => {
-          GM_xmlhttpRequest({
-            method: 'DELETE',
-            url: `https://api.notion.com/v1/blocks/${block.id}`,
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Notion-Version': NOTION_API_VERSION
-            },
-            onload: function() { resolve(); },
-            onerror: function() { resolve(); }
-          });
+      // 并行删除旧块（最多同时删除10个，避免API限制）
+      const deleteBlock = (blockId) => new Promise((resolve) => {
+        GM_xmlhttpRequest({
+          method: 'DELETE',
+          url: `https://api.notion.com/v1/blocks/${blockId}`,
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Notion-Version': NOTION_API_VERSION
+          },
+          onload: function() { resolve(); },
+          onerror: function() { resolve(); }
         });
+      });
+
+      // 分批并行删除，每批10个
+      const batchSize = 10;
+      for (let i = 0; i < existingBlocks.length; i += batchSize) {
+        const batch = existingBlocks.slice(i, i + batchSize);
+        await Promise.all(batch.map(block => deleteBlock(block.id)));
       }
 
       // 添加新的内容块
@@ -3195,7 +3213,15 @@ ${tagsYaml}
       overlay.className = 'ds-settings-overlay';
       overlay.innerHTML = `
         <div class="ds-settings-panel">
-          <h2>📝 Discourse Saver 设置 (V4.5.5)</h2>
+          <h2>📝 Discourse Saver 设置 (V4.6.5)</h2>
+
+          <div class="ds-section-title">自定义站点</div>
+
+          <div class="ds-form-group">
+            <label>自定义 Discourse 站点</label>
+            <input type="text" id="ds-custom-sites" value="${config.customSites || ''}" placeholder="example.com, forum.test.com">
+            <div class="ds-hint">逗号分隔的域名，用于检测不到的自建 Discourse 站点</div>
+          </div>
 
           <div class="ds-section-title">保存目标</div>
 
@@ -3375,6 +3401,8 @@ ${tagsYaml}
       // 保存按钮
       overlay.querySelector('#ds-save').addEventListener('click', () => {
         const newConfig = {
+          // 自定义站点
+          customSites: overlay.querySelector('#ds-custom-sites').value.trim(),
           // 保存目标
           saveToObsidian: overlay.querySelector('#ds-save-obsidian').checked,
           saveToNotion: overlay.querySelector('#ds-save-notion').checked,
