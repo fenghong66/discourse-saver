@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discourse Saver (油猴版)
 // @namespace    https://github.com/discourse-saver
-// @version      4.5.6
+// @version      4.5.7
 // @description  通用Discourse论坛内容保存工具 - 支持Obsidian/Notion/HTML，评论、用户名超链接、折叠模式
 // @author       阿成
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=obsidian.md
@@ -1307,6 +1307,60 @@ ${tagsYaml}
 </html>`;
     }
 
+    // 获取 Notion 数据库属性
+    async function getDatabaseProperties(token, databaseId) {
+      return new Promise((resolve, reject) => {
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url: `https://api.notion.com/v1/databases/${databaseId}`,
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Notion-Version': NOTION_API_VERSION
+          },
+          onload: function(response) {
+            if (response.status >= 200 && response.status < 300) {
+              const data = JSON.parse(response.responseText);
+              resolve(data.properties || {});
+            } else {
+              const error = JSON.parse(response.responseText);
+              reject(new Error(error.message || '获取数据库属性失败'));
+            }
+          },
+          onerror: function() {
+            reject(new Error('网络请求失败'));
+          }
+        });
+      });
+    }
+
+    // 查找匹配的属性名（支持模糊匹配）
+    function findMatchingProperty(dbProps, targetName, expectedType = null) {
+      if (!targetName) return null;
+
+      const normalizedTarget = targetName.toLowerCase().trim();
+
+      for (const [propName, propInfo] of Object.entries(dbProps)) {
+        const normalizedProp = propName.toLowerCase().trim();
+
+        // 精确匹配或模糊匹配
+        if (normalizedProp === normalizedTarget ||
+            propName === targetName ||
+            normalizedProp.includes(normalizedTarget) ||
+            normalizedTarget.includes(normalizedProp)) {
+
+          // 如果指定了类型，检查类型是否匹配
+          if (expectedType && propInfo.type !== expectedType) {
+            console.warn(`[Discourse Saver] 属性 "${propName}" 类型不匹配: 期望 ${expectedType}, 实际 ${propInfo.type}`);
+            continue;
+          }
+
+          return { name: propName, type: propInfo.type };
+        }
+      }
+
+      return null;
+    }
+
     // 保存到 Notion（使用 GM_xmlhttpRequest 解决 CORS）
     async function saveToNotion(markdown, metadata, config) {
       const token = config.notionToken;
@@ -1316,53 +1370,102 @@ ${tagsYaml}
         throw new Error('请先配置 Notion Token 和 Database ID');
       }
 
-      // 构建 Notion 页面属性
-      const properties = {};
-
-      // 标题（必需）
-      properties[config.notionPropTitle || '标题'] = {
-        title: [{ text: { content: metadata.title.substring(0, 2000) } }]
-      };
-
-      // URL
-      if (config.notionPropUrl) {
-        properties[config.notionPropUrl] = { url: metadata.url };
+      // 先获取数据库属性
+      console.log('[Discourse Saver] 正在获取数据库属性...');
+      let dbProps;
+      try {
+        dbProps = await getDatabaseProperties(token, databaseId);
+        console.log('[Discourse Saver] 数据库属性:', Object.keys(dbProps));
+      } catch (e) {
+        throw new Error('获取数据库属性失败: ' + e.message);
       }
 
-      // 作者
-      if (config.notionPropAuthor) {
-        properties[config.notionPropAuthor] = {
+      // 构建 Notion 页面属性（只使用数据库中存在的属性）
+      const properties = {};
+
+      // 标题（必需）- 查找 title 类型的属性
+      const titleProp = findMatchingProperty(dbProps, config.notionPropTitle || '标题', 'title') ||
+                        findMatchingProperty(dbProps, 'Name', 'title') ||
+                        findMatchingProperty(dbProps, '名称', 'title');
+
+      if (!titleProp) {
+        // 如果没找到，使用数据库中第一个 title 类型的属性
+        for (const [propName, propInfo] of Object.entries(dbProps)) {
+          if (propInfo.type === 'title') {
+            console.log(`[Discourse Saver] 使用 "${propName}" 作为标题属性`);
+            properties[propName] = {
+              title: [{ text: { content: metadata.title.substring(0, 2000) } }]
+            };
+            break;
+          }
+        }
+        if (Object.keys(properties).length === 0) {
+          throw new Error('数据库中没有找到标题属性（title 类型）');
+        }
+      } else {
+        console.log(`[Discourse Saver] 标题属性: "${titleProp.name}"`);
+        properties[titleProp.name] = {
+          title: [{ text: { content: metadata.title.substring(0, 2000) } }]
+        };
+      }
+
+      // URL - 查找 url 类型的属性
+      const urlProp = findMatchingProperty(dbProps, config.notionPropUrl || '链接', 'url');
+      if (urlProp) {
+        console.log(`[Discourse Saver] URL属性: "${urlProp.name}"`);
+        properties[urlProp.name] = { url: metadata.url };
+      }
+
+      // 作者 - 查找 rich_text 类型的属性
+      const authorProp = findMatchingProperty(dbProps, config.notionPropAuthor || '作者', 'rich_text');
+      if (authorProp) {
+        console.log(`[Discourse Saver] 作者属性: "${authorProp.name}"`);
+        properties[authorProp.name] = {
           rich_text: [{ text: { content: metadata.author || '未知' } }]
         };
       }
 
-      // 分类
-      if (config.notionPropCategory && metadata.category) {
-        properties[config.notionPropCategory] = {
-          select: { name: metadata.category }
-        };
+      // 分类 - 查找 select 类型的属性
+      if (metadata.category) {
+        const categoryProp = findMatchingProperty(dbProps, config.notionPropCategory || '分类', 'select');
+        if (categoryProp) {
+          console.log(`[Discourse Saver] 分类属性: "${categoryProp.name}"`);
+          properties[categoryProp.name] = {
+            select: { name: metadata.category }
+          };
+        }
       }
 
-      // 标签
-      if (config.notionPropTags && metadata.tags && metadata.tags.length > 0) {
-        properties[config.notionPropTags] = {
-          multi_select: metadata.tags.slice(0, 10).map(tag => ({ name: tag.substring(0, 100) }))
-        };
+      // 标签 - 查找 multi_select 类型的属性
+      if (metadata.tags && metadata.tags.length > 0) {
+        const tagsProp = findMatchingProperty(dbProps, config.notionPropTags || '标签', 'multi_select');
+        if (tagsProp) {
+          console.log(`[Discourse Saver] 标签属性: "${tagsProp.name}"`);
+          properties[tagsProp.name] = {
+            multi_select: metadata.tags.slice(0, 10).map(tag => ({ name: tag.substring(0, 100) }))
+          };
+        }
       }
 
-      // 保存日期
-      if (config.notionPropSavedDate) {
-        properties[config.notionPropSavedDate] = {
+      // 保存日期 - 查找 date 类型的属性
+      const dateProp = findMatchingProperty(dbProps, config.notionPropSavedDate || '保存日期', 'date');
+      if (dateProp) {
+        console.log(`[Discourse Saver] 日期属性: "${dateProp.name}"`);
+        properties[dateProp.name] = {
           date: { start: new Date().toISOString().split('T')[0] }
         };
       }
 
-      // 评论数
-      if (config.notionPropCommentCount) {
-        properties[config.notionPropCommentCount] = {
+      // 评论数 - 查找 number 类型的属性
+      const commentCountProp = findMatchingProperty(dbProps, config.notionPropCommentCount || '评论数', 'number');
+      if (commentCountProp) {
+        console.log(`[Discourse Saver] 评论数属性: "${commentCountProp.name}"`);
+        properties[commentCountProp.name] = {
           number: metadata.commentCount || 0
         };
       }
+
+      console.log('[Discourse Saver] 最终属性:', Object.keys(properties));
 
       // 将 Markdown 转换为 Notion blocks
       const children = markdownToNotionBlocks(markdown);
@@ -1390,6 +1493,7 @@ ${tagsYaml}
             } else {
               const error = JSON.parse(response.responseText);
               console.error('[Discourse Saver] Notion 错误:', error);
+              console.error('[Discourse Saver] 请求数据:', { properties, childrenCount: children.length });
               reject(new Error(error.message || 'Notion API 错误'));
             }
           },
