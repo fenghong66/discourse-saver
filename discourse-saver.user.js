@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discourse Saver (油猴版)
 // @namespace    https://github.com/discourse-saver
-// @version      4.6.24
+// @version      4.6.25
 // @description  通用Discourse论坛内容保存工具 - 支持Obsidian/Notion/HTML，评论、用户名超链接、折叠模式
 // @author       阿成
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=obsidian.md
@@ -2707,15 +2707,15 @@ ${tagsYaml}
         return richText;
       }
 
-      // 辅助函数：解析内联格式（加粗、斜体、代码）- 修复顺序问题
+      // 辅助函数：解析内联格式（加粗、斜体、代码、裸URL）- 增强链接支持
       function parseInlineFormatting(text) {
         if (!text || text.trim() === '') {
           return [{ text: { content: ' ' } }]; // Notion 不允许空 rich_text
         }
 
         const parts = [];
-        // 使用正则分割并保持顺序
-        const regex = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g;
+        // 使用正则分割并保持顺序 - 增加裸URL匹配
+        const regex = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|https?:\/\/[^\s<>\[\]()]+)/g;
         let lastIndex = 0;
         let match;
 
@@ -2748,6 +2748,23 @@ ${tagsYaml}
             const content = matched.slice(1, -1);
             if (content) {
               parts.push({ text: { content: content.substring(0, 2000) }, annotations: { italic: true } });
+            }
+          }
+          // 裸URL https://xxx
+          else if (matched.startsWith('http://') || matched.startsWith('https://')) {
+            try {
+              // 清理URL末尾可能的标点符号
+              let cleanUrl = matched.replace(/[,.:;!?）)]+$/, '');
+              // 验证URL格式
+              new URL(cleanUrl);
+              // 提取域名作为显示文本
+              const displayText = cleanUrl.replace(/^https?:\/\//, '').split('/')[0];
+              parts.push({
+                text: { content: displayText.substring(0, 2000), link: { url: cleanUrl } }
+              });
+            } catch (e) {
+              // URL无效，作为普通文本
+              parts.push({ text: { content: matched.substring(0, 2000) } });
             }
           }
 
@@ -3937,7 +3954,7 @@ ${tagsYaml}
       overlay.className = 'ds-settings-overlay';
       overlay.innerHTML = `
         <div class="ds-settings-panel">
-          <h2>📝 Discourse Saver 设置 (V4.6.24)</h2>
+          <h2>📝 Discourse Saver 设置 (V4.6.25)</h2>
 
           <div class="ds-section-title">自定义站点</div>
 
