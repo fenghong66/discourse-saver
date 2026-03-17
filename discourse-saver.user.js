@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discourse Saver (油猴版)
 // @namespace    https://github.com/discourse-saver
-// @version      4.6.16
+// @version      4.6.17
 // @description  通用Discourse论坛内容保存工具 - 支持Obsidian/Notion/HTML，评论、用户名超链接、折叠模式
 // @author       阿成
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=obsidian.md
@@ -379,7 +379,64 @@
       return result;
     }
 
-    return { getBeijingTime, sanitizeFileName, showNotification, fetchImageAsBase64, embedImagesInMarkdown };
+    // 验证 URL 是否有效
+    function isValidUrl(url) {
+      if (!url || typeof url !== 'string') return false;
+      try {
+        // 去除空白字符
+        url = url.trim();
+        if (!url) return false;
+        // 检查是否包含无效字符
+        if (/[\s<>"{}|\\^`\[\]]/.test(url)) return false;
+        // 尝试构造 URL 对象
+        new URL(url);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    // 构建安全的 URL
+    function buildSafeUrl(url, baseUrl = window.location.origin) {
+      if (!url || typeof url !== 'string') return '';
+      try {
+        url = url.trim();
+        if (!url) return '';
+        // 如果已经是完整 URL
+        if (url.startsWith('http://') || url.startsWith('https://')) {
+          return isValidUrl(url) ? url : '';
+        }
+        // 相对 URL
+        if (url.startsWith('/')) {
+          const fullUrl = baseUrl + url;
+          return isValidUrl(fullUrl) ? fullUrl : '';
+        }
+        // 不是有效的 URL 格式
+        return '';
+      } catch (e) {
+        console.warn('[Discourse Saver] URL 构建失败:', url, e.message);
+        return '';
+      }
+    }
+
+    // 清理 HTML 内容，防止崩溃
+    function sanitizeHtml(html) {
+      if (!html || typeof html !== 'string') return '';
+      try {
+        // 移除可能导致解析问题的字符
+        html = html.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+        // 修复未闭合的标签
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = html;
+        return tempDiv.innerHTML;
+      } catch (e) {
+        console.warn('[Discourse Saver] HTML 清理失败:', e.message);
+        // 返回纯文本版本
+        return html.replace(/<[^>]*>/g, '');
+      }
+    }
+
+    return { getBeijingTime, sanitizeFileName, showNotification, fetchImageAsBase64, embedImagesInMarkdown, isValidUrl, buildSafeUrl, sanitizeHtml };
   })();
 
   // ============================================================
@@ -1643,8 +1700,18 @@
     // 转换为带评论的Markdown
     function convertToMarkdownWithComments(contentHTML, metadata, comments, config) {
       const td = initTurndown();
-      let mainContent = td.turndown(contentHTML);
-      mainContent = cleanupMarkdown(mainContent);
+
+      // 安全地转换主内容
+      let mainContent = '';
+      try {
+        const cleanedMainHtml = UtilModule.sanitizeHtml(contentHTML || '');
+        mainContent = td.turndown(cleanedMainHtml);
+        mainContent = cleanupMarkdown(mainContent);
+      } catch (mainContentError) {
+        console.error('[Discourse Saver] 主内容转换失败:', mainContentError.message);
+        // 备选方案：使用纯文本
+        mainContent = (contentHTML || '').replace(/<[^>]*>/g, '').trim() || '*[主内容转换失败]*';
+      }
 
       let markdown = '';
 
@@ -1696,22 +1763,31 @@ ${tagsYaml}
 
         for (const comment of comments) {
           try {
-            let commentContent = td.turndown(comment.contentHTML || '');
-            commentContent = cleanupMarkdown(commentContent);
-            commentContent = commentContent.trim();
+            // 清理 HTML 内容，防止解析崩溃
+            const cleanedHtml = UtilModule.sanitizeHtml(comment.contentHTML || '');
 
-            // 用户名超链接（验证 URL）
-            let safeUserUrl = comment.userUrl;
-            if (safeUserUrl && !safeUserUrl.startsWith('http')) {
-              safeUserUrl = window.location.origin + safeUserUrl;
+            // 安全地转换为 Markdown
+            let commentContent = '';
+            try {
+              commentContent = td.turndown(cleanedHtml);
+              commentContent = cleanupMarkdown(commentContent);
+              commentContent = commentContent.trim();
+            } catch (turndownError) {
+              console.warn(`[Discourse Saver] Turndown 转换失败 (第${comment.position}楼):`, turndownError.message);
+              // 备选方案：使用纯文本
+              commentContent = cleanedHtml.replace(/<[^>]*>/g, '').trim() || '*[内容转换失败]*';
             }
 
+            // 构建安全的用户 URL
+            const safeUserUrl = UtilModule.buildSafeUrl(comment.userUrl);
+            const safeUsername = (comment.username || '用户').replace(/[[\]]/g, '');
+
             const usernameDisplay = safeUserUrl
-              ? `[${comment.username}](${safeUserUrl})`
-              : comment.username;
+              ? `[${safeUsername}](${safeUserUrl})`
+              : safeUsername;
             const usernameDisplayHtml = safeUserUrl
-              ? `<a href="${safeUserUrl}"><b>${comment.username}</b></a>`
-              : `<b>${comment.username}</b>`;
+              ? `<a href="${safeUserUrl}"><b>${safeUsername}</b></a>`
+              : `<b>${safeUsername}</b>`;
 
             if (config.foldComments) {
               // 折叠模式：转换Markdown为HTML
@@ -1741,11 +1817,29 @@ ${tagsYaml}
             }
             processedCount++;
           } catch (e) {
-            console.error(`[Discourse Saver] 处理第 ${comment.position} 楼评论失败:`, e.message);
+            console.error(`[Discourse Saver] 处理第 ${comment.position || '?'} 楼评论失败:`, e.message);
+            console.error('[Discourse Saver] 失败评论数据:', {
+              position: comment.position,
+              username: comment.username,
+              contentLength: (comment.contentHTML || '').length,
+              userUrl: comment.userUrl
+            });
             errorCount++;
-            // 添加错误提示但继续处理
-            markdown += `### ${comment.position}楼 - ${comment.username || '用户'}\n\n`;
-            markdown += `*[评论内容处理失败]*\n\n`;
+            // 尝试保存基本信息
+            const fallbackUsername = (comment.username || '用户').replace(/[[\]<>]/g, '');
+            const fallbackPosition = comment.position || '?';
+            markdown += `### ${fallbackPosition}楼 - ${fallbackUsername}\n\n`;
+            // 尝试保存纯文本内容
+            try {
+              const plainText = (comment.contentHTML || '').replace(/<[^>]*>/g, '').trim();
+              if (plainText) {
+                markdown += plainText.substring(0, 2000) + '\n\n';
+              } else {
+                markdown += `*[评论内容处理失败]*\n\n`;
+              }
+            } catch (fallbackError) {
+              markdown += `*[评论内容处理失败]*\n\n`;
+            }
           }
         }
 
@@ -2343,18 +2437,34 @@ ${tagsYaml}
             children: children.slice(0, 100)
           }),
           onload: function(response) {
-            if (response.status >= 200 && response.status < 300) {
-              const data = JSON.parse(response.responseText);
-              console.log('[Discourse Saver] Notion 页面创建成功:', data.id);
-              resolve(data);
-            } else {
-              const error = JSON.parse(response.responseText);
-              console.error('[Discourse Saver] Notion 错误:', error);
-              console.error('[Discourse Saver] 请求数据:', { properties, childrenCount: children.length });
-              reject(new Error(error.message || 'Notion API 错误'));
+            try {
+              if (response.status >= 200 && response.status < 300) {
+                const data = JSON.parse(response.responseText);
+                console.log('[Discourse Saver] Notion 页面创建成功:', data.id);
+                resolve(data);
+              } else {
+                let errorMessage = `HTTP ${response.status}`;
+                try {
+                  const error = JSON.parse(response.responseText);
+                  console.error('[Discourse Saver] Notion 错误:', error);
+                  errorMessage = error.message || errorMessage;
+                  // 打印失败的块信息便于调试
+                  if (error.code === 'validation_error') {
+                    console.error('[Discourse Saver] 验证错误，前3个块:', JSON.stringify(children.slice(0, 3), null, 2));
+                  }
+                } catch (parseErr) {
+                  console.error('[Discourse Saver] Notion 响应:', response.responseText);
+                }
+                console.error('[Discourse Saver] 请求数据:', { properties, childrenCount: children.length });
+                reject(new Error(errorMessage));
+              }
+            } catch (e) {
+              console.error('[Discourse Saver] 处理Notion响应失败:', e);
+              reject(new Error('处理Notion响应失败: ' + e.message));
             }
           },
           onerror: function(error) {
+            console.error('[Discourse Saver] Notion 网络错误:', error);
             reject(new Error('网络请求失败'));
           }
         });
@@ -2674,46 +2784,59 @@ ${tagsYaml}
         }
         // HTML <details> 块（折叠评论）- 转换为 Notion toggle 块
         else if (line.startsWith('<details>') || line.match(/^<details\s/)) {
-          // 提取 summary 标题
-          let summaryTitle = '展开';
-          let detailsContent = '';
-          i++;
+          try {
+            // 提取 summary 标题
+            let summaryTitle = '展开';
+            let detailsContent = '';
+            const startIndex = i;
+            i++;
 
-          // 查找 summary 行
-          while (i < lines.length) {
-            const currentLine = lines[i];
-            if (currentLine.includes('<summary>')) {
-              // 提取 summary 内容
-              const summaryMatch = currentLine.match(/<summary>(.+?)<\/summary>/);
-              if (summaryMatch) {
-                // 移除 HTML 标签
-                summaryTitle = summaryMatch[1].replace(/<[^>]+>/g, '').trim();
+            // 查找 summary 行
+            while (i < lines.length) {
+              const currentLine = lines[i];
+              if (currentLine.includes('<summary>')) {
+                // 提取 summary 内容
+                const summaryMatch = currentLine.match(/<summary>(.+?)<\/summary>/);
+                if (summaryMatch) {
+                  // 移除 HTML 标签
+                  summaryTitle = summaryMatch[1].replace(/<[^>]+>/g, '').trim() || '展开';
+                }
+                i++;
+                continue;
+              }
+              if (currentLine.includes('</details>')) {
+                break;
+              }
+              if (currentLine.trim()) {
+                detailsContent += currentLine + '\n';
               }
               i++;
-              continue;
             }
-            if (currentLine.includes('</details>')) {
-              break;
-            }
-            if (currentLine.trim()) {
-              detailsContent += currentLine + '\n';
-            }
-            i++;
-          }
 
-          // 创建 toggle 块
-          blocks.push({
-            type: 'toggle',
-            toggle: {
-              rich_text: [{ text: { content: summaryTitle.substring(0, 2000) || '展开' } }],
-              children: [{
-                type: 'paragraph',
-                paragraph: {
-                  rich_text: parseRichText(detailsContent.trim().substring(0, 2000) || ' ')
-                }
-              }]
-            }
-          });
+            // 创建 toggle 块
+            const safeTitle = (summaryTitle || '展开').substring(0, 2000);
+            const safeContent = (detailsContent.trim() || ' ').substring(0, 2000);
+
+            blocks.push({
+              type: 'toggle',
+              toggle: {
+                rich_text: [{ text: { content: safeTitle } }],
+                children: [{
+                  type: 'paragraph',
+                  paragraph: {
+                    rich_text: parseRichText(safeContent)
+                  }
+                }]
+              }
+            });
+          } catch (detailsError) {
+            console.warn('[Discourse Saver] details 块解析失败:', detailsError.message);
+            // 作为普通段落处理
+            blocks.push({
+              type: 'paragraph',
+              paragraph: { rich_text: [{ text: { content: line.replace(/<[^>]+>/g, '') } }] }
+            });
+          }
         }
         // 跳过 </details> 结束标签
         else if (line.includes('</details>')) {
@@ -2763,64 +2886,85 @@ ${tagsYaml}
         }
         // Markdown 表格
         else if (line.startsWith('|') && line.endsWith('|')) {
-          // 收集所有表格行
-          const tableRows = [];
-          let tableIndex = i;
+          try {
+            // 收集所有表格行
+            const tableRows = [];
+            let tableIndex = i;
 
-          while (tableIndex < lines.length) {
-            const tableLine = lines[tableIndex];
-            if (tableLine.startsWith('|') && tableLine.endsWith('|')) {
-              // 跳过分隔行 (|---|---|)
-              if (!tableLine.match(/^\|[\s\-:]+\|$/)) {
-                // 解析单元格
-                const cells = tableLine
-                  .slice(1, -1) // 移除首尾的 |
-                  .split('|')
-                  .map(cell => cell.trim());
-                tableRows.push(cells);
-              }
-              tableIndex++;
-            } else {
-              break;
-            }
-          }
-
-          // 如果有有效的表格行，创建 Notion table
-          if (tableRows.length > 0) {
-            const columnCount = Math.max(...tableRows.map(row => row.length));
-
-            // 创建表格行
-            const notionRows = tableRows.map((row, rowIndex) => {
-              // 补齐单元格数量
-              while (row.length < columnCount) {
-                row.push('');
-              }
-
-              return {
-                type: 'table_row',
-                table_row: {
-                  cells: row.map(cellContent => {
-                    // 解析单元格内容中的链接和格式
-                    return parseRichText(cellContent.substring(0, 2000) || ' ');
-                  })
+            while (tableIndex < lines.length) {
+              const tableLine = lines[tableIndex];
+              if (tableLine.startsWith('|') && tableLine.endsWith('|')) {
+                // 跳过分隔行 (|---|---|)
+                if (!tableLine.match(/^\|[\s\-:]+\|$/)) {
+                  // 解析单元格
+                  const cells = tableLine
+                    .slice(1, -1) // 移除首尾的 |
+                    .split('|')
+                    .map(cell => cell.trim());
+                  if (cells.length > 0) {
+                    tableRows.push(cells);
+                  }
                 }
-              };
-            });
-
-            // 创建表格块
-            blocks.push({
-              type: 'table',
-              table: {
-                table_width: columnCount,
-                has_column_header: true,
-                has_row_header: false,
-                children: notionRows
+                tableIndex++;
+              } else {
+                break;
               }
-            });
+            }
 
-            // 更新索引，跳过已处理的表格行
-            i = tableIndex - 1; // -1 因为循环末尾会 i++
-            console.log(`[Discourse Saver] 解析表格: ${tableRows.length} 行, ${columnCount} 列`);
+            // 如果有有效的表格行，创建 Notion table
+            if (tableRows.length > 0 && tableRows.some(row => row.length > 0)) {
+              const columnCount = Math.max(1, ...tableRows.map(row => row.length || 1));
+
+              // 创建表格行
+              const notionRows = tableRows.map((row, rowIndex) => {
+                // 补齐单元格数量
+                while (row.length < columnCount) {
+                  row.push('');
+                }
+
+                return {
+                  type: 'table_row',
+                  table_row: {
+                    cells: row.slice(0, columnCount).map(cellContent => {
+                      // 解析单元格内容中的链接和格式
+                      try {
+                        return parseRichText((cellContent || '').substring(0, 2000) || ' ');
+                      } catch (e) {
+                        return [{ text: { content: cellContent || ' ' } }];
+                      }
+                    })
+                  }
+                };
+              });
+
+              // 创建表格块
+              blocks.push({
+                type: 'table',
+                table: {
+                  table_width: columnCount,
+                  has_column_header: true,
+                  has_row_header: false,
+                  children: notionRows
+                }
+              });
+
+              // 更新索引，跳过已处理的表格行
+              i = tableIndex - 1; // -1 因为循环末尾会 i++
+              console.log(`[Discourse Saver] 解析表格: ${tableRows.length} 行, ${columnCount} 列`);
+            } else {
+              // 表格解析失败，作为普通段落处理
+              blocks.push({
+                type: 'paragraph',
+                paragraph: { rich_text: [{ text: { content: line } }] }
+              });
+            }
+          } catch (tableError) {
+            console.warn('[Discourse Saver] 表格解析失败:', tableError.message);
+            // 作为普通段落处理
+            blocks.push({
+              type: 'paragraph',
+              paragraph: { rich_text: [{ text: { content: line } }] }
+            });
           }
         }
         // 分割线
@@ -2974,6 +3118,26 @@ ${tagsYaml}
         i++;
       }
 
+      // 辅助函数：验证并修复 rich_text 数组
+      function validateRichText(richText) {
+        if (!Array.isArray(richText) || richText.length === 0) {
+          return [{ text: { content: ' ' } }];
+        }
+        return richText.map(item => {
+          if (!item || !item.text) {
+            return { text: { content: ' ' } };
+          }
+          if (item.text.content === null || item.text.content === undefined) {
+            item.text.content = ' ';
+          }
+          // 确保链接URL有效
+          if (item.text.link && !item.text.link.url) {
+            delete item.text.link;
+          }
+          return item;
+        });
+      }
+
       // 过滤并验证所有块，确保每个块都有效
       const validBlocks = blocks.filter(block => {
         try {
@@ -2988,22 +3152,9 @@ ${tagsYaml}
             const content = block[block.type];
             if (!content) return false;
 
-            // 检查 rich_text 是否有效
+            // 检查并修复 rich_text
             if (content.rich_text) {
-              if (!Array.isArray(content.rich_text) || content.rich_text.length === 0) {
-                // 修复空 rich_text
-                content.rich_text = [{ text: { content: ' ' } }];
-              }
-              // 验证每个 rich_text 项
-              content.rich_text = content.rich_text.map(item => {
-                if (!item || !item.text) {
-                  return { text: { content: ' ' } };
-                }
-                if (!item.text.content && item.text.content !== '') {
-                  item.text.content = ' ';
-                }
-                return item;
-              });
+              content.rich_text = validateRichText(content.rich_text);
             }
           }
 
@@ -3019,6 +3170,45 @@ ${tagsYaml}
           if (block.type === 'bookmark') {
             if (!block.bookmark || !block.bookmark.url) {
               return false;
+            }
+          }
+
+          // 检查表格块
+          if (block.type === 'table') {
+            if (!block.table || !block.table.children || block.table.children.length === 0) {
+              return false;
+            }
+            // 验证每个表格行
+            const tableWidth = block.table.table_width || 1;
+            block.table.children = block.table.children.filter(row => {
+              if (!row || row.type !== 'table_row' || !row.table_row || !row.table_row.cells) {
+                return false;
+              }
+              // 确保每行有正确数量的单元格，每个单元格都是有效的 rich_text
+              while (row.table_row.cells.length < tableWidth) {
+                row.table_row.cells.push([{ text: { content: ' ' } }]);
+              }
+              row.table_row.cells = row.table_row.cells.slice(0, tableWidth).map(cell => {
+                return validateRichText(cell);
+              });
+              return true;
+            });
+            if (block.table.children.length === 0) return false;
+          }
+
+          // 检查 toggle 块
+          if (block.type === 'toggle') {
+            if (!block.toggle) return false;
+            block.toggle.rich_text = validateRichText(block.toggle.rich_text);
+            // 验证 children
+            if (block.toggle.children && Array.isArray(block.toggle.children)) {
+              block.toggle.children = block.toggle.children.filter(child => {
+                if (!child || !child.type) return false;
+                if (child.type === 'paragraph' && child.paragraph) {
+                  child.paragraph.rich_text = validateRichText(child.paragraph.rich_text);
+                }
+                return true;
+              });
             }
           }
 
@@ -3617,7 +3807,7 @@ ${tagsYaml}
       overlay.className = 'ds-settings-overlay';
       overlay.innerHTML = `
         <div class="ds-settings-panel">
-          <h2>📝 Discourse Saver 设置 (V4.6.16)</h2>
+          <h2>📝 Discourse Saver 设置 (V4.6.17)</h2>
 
           <div class="ds-section-title">自定义站点</div>
 
