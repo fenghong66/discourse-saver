@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discourse Saver (油猴版)
 // @namespace    https://github.com/discourse-saver
-// @version      4.6.14
+// @version      4.6.15
 // @description  通用Discourse论坛内容保存工具 - 支持Obsidian/Notion/HTML，评论、用户名超链接、折叠模式
 // @author       阿成
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=obsidian.md
@@ -2682,6 +2682,68 @@ ${tagsYaml}
             }
           });
         }
+        // Markdown 表格
+        else if (line.startsWith('|') && line.endsWith('|')) {
+          // 收集所有表格行
+          const tableRows = [];
+          let tableIndex = i;
+
+          while (tableIndex < lines.length) {
+            const tableLine = lines[tableIndex];
+            if (tableLine.startsWith('|') && tableLine.endsWith('|')) {
+              // 跳过分隔行 (|---|---|)
+              if (!tableLine.match(/^\|[\s\-:]+\|$/)) {
+                // 解析单元格
+                const cells = tableLine
+                  .slice(1, -1) // 移除首尾的 |
+                  .split('|')
+                  .map(cell => cell.trim());
+                tableRows.push(cells);
+              }
+              tableIndex++;
+            } else {
+              break;
+            }
+          }
+
+          // 如果有有效的表格行，创建 Notion table
+          if (tableRows.length > 0) {
+            const columnCount = Math.max(...tableRows.map(row => row.length));
+
+            // 创建表格行
+            const notionRows = tableRows.map((row, rowIndex) => {
+              // 补齐单元格数量
+              while (row.length < columnCount) {
+                row.push('');
+              }
+
+              return {
+                type: 'table_row',
+                table_row: {
+                  cells: row.map(cellContent => {
+                    // 解析单元格内容中的链接和格式
+                    return parseRichText(cellContent.substring(0, 2000) || ' ');
+                  })
+                }
+              };
+            });
+
+            // 创建表格块
+            blocks.push({
+              type: 'table',
+              table: {
+                table_width: columnCount,
+                has_column_header: true,
+                has_row_header: false,
+                children: notionRows
+              }
+            });
+
+            // 更新索引，跳过已处理的表格行
+            i = tableIndex - 1; // -1 因为循环末尾会 i++
+            console.log(`[Discourse Saver] 解析表格: ${tableRows.length} 行, ${columnCount} 列`);
+          }
+        }
         // 分割线
         else if (line === '---' || line === '***' || line === '___') {
           blocks.push({ type: 'divider', divider: {} });
@@ -3476,7 +3538,7 @@ ${tagsYaml}
       overlay.className = 'ds-settings-overlay';
       overlay.innerHTML = `
         <div class="ds-settings-panel">
-          <h2>📝 Discourse Saver 设置 (V4.6.14)</h2>
+          <h2>📝 Discourse Saver 设置 (V4.6.15)</h2>
 
           <div class="ds-section-title">自定义站点</div>
 
