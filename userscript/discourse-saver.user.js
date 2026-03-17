@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discourse Saver (油猴版)
 // @namespace    https://github.com/discourse-saver
-// @version      4.6.8
+// @version      4.6.9
 // @description  通用Discourse论坛内容保存工具 - 支持Obsidian/Notion/HTML，评论、用户名超链接、折叠模式
 // @author       阿成
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=obsidian.md
@@ -2242,6 +2242,30 @@ ${tagsYaml}
         return '网盘';
       }
 
+      // 辅助函数：验证并补全 URL
+      function normalizeUrl(url) {
+        if (!url) return null;
+        let normalized = url.trim();
+        // 如果是相对路径，补全为完整 URL
+        if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
+          if (normalized.startsWith('/')) {
+            normalized = window.location.origin + normalized;
+          } else if (normalized.startsWith('#')) {
+            normalized = window.location.href.split('#')[0] + normalized;
+          } else if (!normalized.includes(':')) {
+            // 不是特殊协议（如 mailto:, tel:），添加 https://
+            normalized = 'https://' + normalized;
+          }
+        }
+        // 验证 URL 是否有效
+        try {
+          new URL(normalized);
+          return normalized;
+        } catch {
+          return null;
+        }
+      }
+
       // 辅助函数：解析富文本（支持加粗、斜体、链接、代码）
       function parseRichText(text) {
         const richText = [];
@@ -2261,10 +2285,18 @@ ${tagsYaml}
               richText.push(...parseInlineFormatting(before));
             }
           }
-          // 添加链接
-          richText.push({
-            text: { content: match[1], link: { url: match[2] } }
-          });
+          // 处理链接 URL
+          const linkUrl = normalizeUrl(match[2]);
+          if (linkUrl) {
+            richText.push({
+              text: { content: match[1], link: { url: linkUrl } }
+            });
+          } else {
+            // URL 无效，只显示文本不添加链接
+            richText.push({
+              text: { content: match[1] }
+            });
+          }
           lastIndex = match.index + match[0].length;
         }
 
@@ -2431,18 +2463,26 @@ ${tagsYaml}
         else if (line.match(/^!\[.*\]\(.+\)$/)) {
           const match = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
           if (match) {
-            const imageUrl = match[2];
+            const rawUrl = match[2];
             // 检查是否是 base64 数据（太大不支持）
-            if (imageUrl.startsWith('data:')) {
+            if (rawUrl.startsWith('data:')) {
               blocks.push({
                 type: 'paragraph',
                 paragraph: { rich_text: [{ text: { content: '[内嵌图片 - Notion 不支持 Base64]' } }] }
               });
             } else {
-              blocks.push({
-                type: 'image',
-                image: { type: 'external', external: { url: imageUrl } }
-              });
+              const imageUrl = normalizeUrl(rawUrl);
+              if (imageUrl) {
+                blocks.push({
+                  type: 'image',
+                  image: { type: 'external', external: { url: imageUrl } }
+                });
+              } else {
+                blocks.push({
+                  type: 'paragraph',
+                  paragraph: { rich_text: [{ text: { content: '[图片链接无效]' } }] }
+                });
+              }
             }
           }
         }
@@ -2505,44 +2545,53 @@ ${tagsYaml}
           const match = line.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
           if (match) {
             const text = match[1];
-            const url = match[2];
-            const urlType = getUrlType(url);
+            const url = normalizeUrl(match[2]);
 
-            // 视频链接使用 embed
-            if (urlType === 'video') {
-              blocks.push({
-                type: 'video',
-                video: { type: 'external', external: { url } }
-              });
-            } else if (urlType === 'cloud') {
-              // 网盘链接：使用 callout 块
-              blocks.push({
-                type: 'callout',
-                callout: {
-                  icon: { emoji: '📦' },
-                  rich_text: [{
-                    text: { content: getCloudName(url) + ': ', link: null },
-                    annotations: { bold: true }
-                  }, {
-                    text: { content: text || '点击下载', link: { url } }
-                  }]
-                }
-              });
-            } else if (urlType === 'image') {
-              blocks.push({
-                type: 'image',
-                image: { type: 'external', external: { url } }
-              });
-            } else {
-              // 普通链接
+            if (!url) {
+              // URL 无效，只显示文本
               blocks.push({
                 type: 'paragraph',
-                paragraph: {
-                  rich_text: [{
-                    text: { content: text, link: { url } }
-                  }]
-                }
+                paragraph: { rich_text: [{ text: { content: text } }] }
               });
+            } else {
+              const urlType = getUrlType(url);
+
+              // 视频链接使用 embed
+              if (urlType === 'video') {
+                blocks.push({
+                  type: 'video',
+                  video: { type: 'external', external: { url } }
+                });
+              } else if (urlType === 'cloud') {
+                // 网盘链接：使用 callout 块
+                blocks.push({
+                  type: 'callout',
+                  callout: {
+                    icon: { emoji: '📦' },
+                    rich_text: [{
+                      text: { content: getCloudName(url) + ': ', link: null },
+                      annotations: { bold: true }
+                    }, {
+                      text: { content: text || '点击下载', link: { url } }
+                    }]
+                  }
+                });
+              } else if (urlType === 'image') {
+                blocks.push({
+                  type: 'image',
+                  image: { type: 'external', external: { url } }
+                });
+              } else {
+                // 普通链接
+                blocks.push({
+                  type: 'paragraph',
+                  paragraph: {
+                    rich_text: [{
+                      text: { content: text, link: { url } }
+                    }]
+                  }
+                });
+              }
             }
           }
         }
@@ -3144,7 +3193,7 @@ ${tagsYaml}
       overlay.className = 'ds-settings-overlay';
       overlay.innerHTML = `
         <div class="ds-settings-panel">
-          <h2>📝 Discourse Saver 设置 (V4.6.8)</h2>
+          <h2>📝 Discourse Saver 设置 (V4.6.9)</h2>
 
           <div class="ds-section-title">自定义站点</div>
 
