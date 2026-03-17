@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discourse Saver (油猴版)
 // @namespace    https://github.com/discourse-saver
-// @version      4.6.23
+// @version      4.6.24
 // @description  通用Discourse论坛内容保存工具 - 支持Obsidian/Notion/HTML，评论、用户名超链接、折叠模式
 // @author       阿成
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=obsidian.md
@@ -1977,99 +1977,86 @@ ${tagsYaml}
     // 存储最后一次大文件保存的信息（用于备选下载）
     let lastLargeFileSave = null;
 
-    // 保存到 Obsidian（统一使用 Advanced URI）
+    // 保存到 Obsidian（使用 v4.3.8 验证过的方式：始终用剪贴板模式）
     async function sendToObsidian(markdown, fileName, config) {
-      // 直接从 GM 存储重新读取，确保获取最新值
+      // 读取配置
       const vaultName = GM_getValue('vaultName', '') || config.vaultName || '';
       const folderPath = GM_getValue('folderPath', 'Discourse收集箱') || config.folderPath || 'Discourse收集箱';
       const encode = (str) => encodeURIComponent(str);
 
-      console.log('[Discourse Saver] ========== Obsidian 保存开始 ==========');
-      console.log('[Discourse Saver] 从 GM 读取 vaultName:', GM_getValue('vaultName', '(undefined)'));
-      console.log('[Discourse Saver] 从 config 读取 vaultName:', config.vaultName);
-      console.log('[Discourse Saver] 最终使用 vaultName:', vaultName || '(空)');
+      console.log('[Discourse Saver] ========== Obsidian 保存 ==========');
+      console.log('[Discourse Saver] Vault:', vaultName || '(默认)');
+      console.log('[Discourse Saver] 文件夹:', folderPath);
 
-      // 检查 Vault 名称
-      if (!vaultName) {
-        UtilModule.showNotification('错误：未设置 Vault 名称！请在设置中填写。', 'error');
-        console.error('[Discourse Saver] 严重错误: Vault 名称为空，无法保存');
-        console.error('[Discourse Saver] 请打开设置面板，填写 Vault 名称后保存');
-        return false;
-      }
+      // 清理文件名（与 v4.3.8 完全一致）
+      const sanitizedTitle = fileName
+        .replace(/[《》<>:"/\\|?*]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/^[\s-]+|[\s-]+$/g, '')
+        .substring(0, 80) || 'Discourse-' + Date.now();
 
-      // 清理文件名中的特殊字符（更严格）
-      let safeFileName = fileName
-        .replace(/[#\[\]|<>:"/\\?*]/g, '')  // 移除更多特殊字符
-        .replace(/\s+/g, ' ')  // 合并多个空格
-        .trim();
+      // 构建文件路径（不含 .md 后缀，Advanced URI 会自动加）
+      const filePath = folderPath ? `${folderPath}/${sanitizedTitle}` : sanitizedTitle;
 
-      // 如果文件名为空，使用默认名
-      if (!safeFileName) {
-        safeFileName = 'Discourse-' + Date.now();
-      }
+      // 构建 vault 参数
+      const vaultParam = vaultName && vaultName.trim() !== ''
+        ? 'vault=' + encode(vaultName.trim()) + '&'
+        : '';
 
-      if (safeFileName !== fileName) {
-        console.log(`[Discourse Saver] 文件名已清理: "${fileName}" -> "${safeFileName}"`);
-      }
+      console.log('[Discourse Saver] 文件路径:', filePath + '.md');
+      console.log('[Discourse Saver] 内容大小:', Math.round(markdown.length / 1024) + 'KB');
 
-      // 计算内容大小
-      const contentSizeKB = Math.round(new Blob([markdown]).size / 1024);
-      const encodedContent = encode(markdown);
-      const encodedLength = encodedContent.length;
-
-      console.log(`[Discourse Saver] 内容大小: ${contentSizeKB}KB, 编码后: ${Math.round(encodedLength/1024)}KB`);
-
-      // 构建完整文件路径
-      const fullPath = `${folderPath}/${safeFileName}.md`;
-      console.log(`[Discourse Saver] 目标路径: ${fullPath}`);
-
-      // 决定使用哪种模式
-      // Android/移动端 URL 长度限制更严格，降低阈值
-      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-      const maxUriLength = isMobile ? 50000 : 500000;  // 移动端 50KB，桌面 500KB
-      const useClipboard = encodedLength > maxUriLength;
-
-      console.log(`[Discourse Saver] 平台: ${isMobile ? '移动端' : '桌面端'}, 阈值: ${maxUriLength/1000}KB`);
-      console.log(`[Discourse Saver] 使用模式: ${useClipboard ? '剪贴板' : '直接数据'}`);
-
-      // 构建 Advanced URI
-      const parts = [
-        `vault=${encode(vaultName)}`,
-        `filepath=${encode(fullPath)}`,
-        `mode=overwrite`
-      ];
-
-      if (useClipboard) {
-        console.log('[Discourse Saver] 复制内容到剪贴板...');
-        GM_setClipboard(markdown, 'text');
-        parts.push('clipboard=true');
-        UtilModule.showNotification('内容已复制到剪贴板', 'info');
-      } else {
-        parts.push(`data=${encodedContent}`);
-      }
-
-      const obsidianUrl = `obsidian://advanced-uri?${parts.join('&')}`;
-      console.log(`[Discourse Saver] URI 长度: ${obsidianUrl.length} 字符`);
-      console.log(`[Discourse Saver] URI 预览: ${obsidianUrl.substring(0, 150)}...`);
-
-      // 打开 Obsidian
+      // ===== 核心：始终使用剪贴板模式（v4.3.8 验证过的方式）=====
       try {
-        console.log('[Discourse Saver] 正在打开 Obsidian...');
-        window.location.href = obsidianUrl;
-        console.log('[Discourse Saver] 已发送 URI 请求');
-        return true;
-      } catch (e) {
-        console.error('[Discourse Saver] 打开 Obsidian 失败:', e);
-        UtilModule.showNotification('打开 Obsidian 失败: ' + e.message, 'error');
+        // 步骤1：写入剪贴板
+        // 优先使用原生 Clipboard API（v4.3.8 方式）
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          console.log('[Discourse Saver] 使用原生 Clipboard API');
+          await navigator.clipboard.writeText(markdown);
+        } else {
+          // 回退到 GM_setClipboard
+          console.log('[Discourse Saver] 回退到 GM_setClipboard');
+          GM_setClipboard(markdown, 'text');
+        }
 
-        // 备用方案：尝试基础 URI
-        console.log('[Discourse Saver] 尝试备用方案: 基础 URI...');
+        // 步骤2：构建 Advanced URI（始终用 clipboard=true，不传 data）
+        let advancedUri = 'obsidian://advanced-uri?' + vaultParam;
+        advancedUri += 'filepath=' + encode(filePath + '.md') + '&';
+        advancedUri += 'clipboard=true&';
+        advancedUri += 'mode=overwrite';
+
+        console.log('[Discourse Saver] URI:', advancedUri);
+
+        // 步骤3：打开 Obsidian
+        window.location.href = advancedUri;
+        return true;
+
+      } catch (clipboardError) {
+        console.error('[Discourse Saver] 剪贴板失败:', clipboardError);
+
+        // 备用方案：使用普通 URI（带 content 参数，有长度限制）
+        console.log('[Discourse Saver] 尝试备用方案...');
+        const encodedContent = encode(markdown);
+
+        if (encodedContent.length > 100000) {
+          UtilModule.showNotification('内容过大，剪贴板不可用，请手动复制', 'error');
+          // 提供下载选项
+          downloadMarkdownFile(markdown, sanitizedTitle, folderPath);
+          return false;
+        }
+
         try {
-          const basicUri = `obsidian://new?vault=${encode(vaultName)}&file=${encode(fullPath)}&content=${encodedContent}`;
+          let basicUri = 'obsidian://new?' + vaultParam;
+          basicUri += 'file=' + encode(filePath) + '&';
+          basicUri += 'overwrite=true&';
+          basicUri += 'content=' + encodedContent;
+
           window.location.href = basicUri;
           return true;
-        } catch (e2) {
-          console.error('[Discourse Saver] 备用方案也失败:', e2);
+        } catch (e) {
+          console.error('[Discourse Saver] 备用方案失败:', e);
+          UtilModule.showNotification('保存失败，已下载文件', 'warning');
+          downloadMarkdownFile(markdown, sanitizedTitle, folderPath);
           return false;
         }
       }
@@ -3950,7 +3937,7 @@ ${tagsYaml}
       overlay.className = 'ds-settings-overlay';
       overlay.innerHTML = `
         <div class="ds-settings-panel">
-          <h2>📝 Discourse Saver 设置 (V4.6.23)</h2>
+          <h2>📝 Discourse Saver 设置 (V4.6.24)</h2>
 
           <div class="ds-section-title">自定义站点</div>
 
@@ -4131,32 +4118,42 @@ ${tagsYaml}
         }
       });
 
-      // OB 测试按钮
-      overlay.querySelector('#ds-test-ob').addEventListener('click', () => {
+      // OB 测试按钮（使用 v4.3.8 验证过的剪贴板方式）
+      overlay.querySelector('#ds-test-ob').addEventListener('click', async () => {
         const vaultName = overlay.querySelector('#ds-vault').value.trim();
         const folderPath = overlay.querySelector('#ds-folder').value.trim() || 'Discourse收集箱';
+        const encode = (str) => encodeURIComponent(str);
 
         console.log('[Discourse Saver] OB 测试: vault=' + vaultName + ', folder=' + folderPath);
 
-        if (!vaultName) {
-          alert('请先填写 Vault 名称！');
-          return;
-        }
-
-        // 构建简单的测试 URI
+        // 测试内容
         const testContent = '# Discourse Saver 测试\n\n如果你看到这个文件，说明连接成功！\n\n时间: ' + new Date().toISOString();
-        const encode = (str) => encodeURIComponent(str);
-        const testUri = `obsidian://advanced-uri?vault=${encode(vaultName)}&filepath=${encode(folderPath + '/DS-测试文件.md')}&data=${encode(testContent)}&mode=overwrite`;
-
-        console.log('[Discourse Saver] 测试 URI 长度:', testUri.length);
-        console.log('[Discourse Saver] 测试 URI:', testUri.substring(0, 200) + '...');
-
-        alert('即将打开 Obsidian 创建测试文件。\n\n如果成功，会在 ' + folderPath + ' 文件夹中看到 "DS-测试文件.md"');
 
         try {
+          // 步骤1：写入剪贴板（v4.3.8 方式）
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(testContent);
+            console.log('[Discourse Saver] 测试内容已写入剪贴板 (原生API)');
+          } else {
+            GM_setClipboard(testContent, 'text');
+            console.log('[Discourse Saver] 测试内容已写入剪贴板 (GM API)');
+          }
+
+          // 步骤2：构建 URI（始终用 clipboard=true）
+          const vaultParam = vaultName ? 'vault=' + encode(vaultName) + '&' : '';
+          const testUri = 'obsidian://advanced-uri?' + vaultParam +
+            'filepath=' + encode(folderPath + '/DS-测试文件.md') + '&' +
+            'clipboard=true&' +
+            'mode=overwrite';
+
+          console.log('[Discourse Saver] 测试 URI:', testUri);
+
+          alert('测试内容已复制到剪贴板。\n\n即将打开 Obsidian，如果成功会在 "' + folderPath + '" 文件夹中看到 "DS-测试文件.md"');
+
           window.location.href = testUri;
         } catch (e) {
-          alert('打开失败: ' + e.message);
+          console.error('[Discourse Saver] 测试失败:', e);
+          alert('测试失败: ' + e.message + '\n\n请确保浏览器允许剪贴板访问。');
         }
       });
 
