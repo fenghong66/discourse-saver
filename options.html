@@ -621,6 +621,20 @@
               <div class="help-text" data-i18n="obsidian.folderHelpDetail">文件夹不存在会自动创建</div>
             </div>
 
+            <div class="form-group">
+              <label data-i18n="obsidian.imageFolder">Obsidian 图片目录</label>
+              <input type="text" id="imageFolderPath" value="Discourse收集箱/assets" placeholder="Discourse收集箱/assets" data-i18n="obsidian.imageFolderPlaceholder">
+              <div class="help-text" data-i18n="obsidian.imageFolderHelpDetail">用于写入 wiki 链接的 vault 相对路径，第一次保存时会要求你选择本地对应文件夹</div>
+            </div>
+
+            <div class="checkbox-row">
+              <input type="checkbox" id="saveImagesLocally">
+              <label for="saveImagesLocally" data-i18n="obsidian.saveImagesLocally">优先保存图片到本地 assets 并改写为 wiki 链接（推荐）</label>
+            </div>
+            <div class="help-text" style="margin-left: 24px;" data-i18n="obsidian.saveImagesLocallyHelp">
+              适合 Obsidian，正文不会塞入超大 Base64；若未授权目录则回退为保留原图链接
+            </div>
+
             <div class="checkbox-row">
               <input type="checkbox" id="useAdvancedUri" checked>
               <label for="useAdvancedUri" data-i18n="obsidian.useAdvancedUri">使用 Advanced URI 插件（支持大内容）</label>
@@ -821,7 +835,7 @@
             <!-- 图片嵌入设置 -->
             <div class="checkbox-row" style="margin-top: 12px;">
               <input type="checkbox" id="embedImages">
-              <label for="embedImages"><span data-i18n="content.embedImages">将图片嵌入笔记（Base64）</span><span class="badge badge-new" data-i18n="badges.new">新</span></label>
+              <label for="embedImages"><span data-i18n="content.embedImages">将图片嵌入笔记（Base64 兼容模式）</span><span class="badge badge-new" data-i18n="badges.new">新</span></label>
             </div>
 
             <div class="image-settings-panel disabled" id="imageSettingsPanel">

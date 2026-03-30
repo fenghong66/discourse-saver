@@ -1,4 +1,4 @@
-// Discourse Saver V4.2.3 - 设置页面
+﻿// Discourse Saver V4.2.3 - 设置页面
 // 支持 Obsidian、飞书多维表格和 Notion
 // V3.6.0: 支持所有 Discourse 论坛 + 自定义站点管理 + 可折叠面板
 // V4.0.1: 新增 Notion Database 保存功能
@@ -42,6 +42,8 @@ const DEFAULT_CONFIG = {
   // 保存目标
   saveToObsidian: true,
   saveToFeishu: false,
+  imageFolderPath: 'Discourse收集箱/assets',
+  saveImagesLocally: false,
 
   // Obsidian 设置
   vaultName: '',
@@ -234,6 +236,8 @@ function loadOptions() {
     // Obsidian 设置
     document.getElementById('vaultName').value = config.vaultName;
     document.getElementById('folderPath').value = config.folderPath;
+    document.getElementById('imageFolderPath').value = config.imageFolderPath || 'Discourse收集箱/assets';
+    document.getElementById('saveImagesLocally').checked = !!config.saveImagesLocally;
     document.getElementById('useAdvancedUri').checked = config.useAdvancedUri;
 
     // 飞书设置
@@ -381,6 +385,8 @@ function saveOptions(e) {
     // Obsidian 设置
     vaultName: document.getElementById('vaultName').value.trim(),
     folderPath: document.getElementById('folderPath').value.trim(),
+    imageFolderPath: document.getElementById('imageFolderPath').value.trim(),
+    saveImagesLocally: document.getElementById('saveImagesLocally').checked,
     useAdvancedUri: document.getElementById('useAdvancedUri').checked,
 
     // 飞书设置
@@ -465,6 +471,18 @@ function saveOptions(e) {
     config.useAdvancedUri = true;
     document.getElementById('useAdvancedUri').checked = true;
     showStatus('已自动启用 Advanced URI（图片嵌入必需）', 'info');
+  }
+
+  if (config.saveImagesLocally && config.embedImages) {
+    config.embedImages = false;
+    document.getElementById('embedImages').checked = false;
+    showStatus('已切换到本地图片模式，已关闭 Base64 兼容模式', 'info');
+  }
+
+  if (!config.imageFolderPath) {
+    const baseFolder = (config.folderPath || 'Discourse').replace(/^\/+|\/+$/g, '');
+    config.imageFolderPath = `${baseFolder}/assets`;
+    document.getElementById('imageFolderPath').value = config.imageFolderPath;
   }
 
   chrome.storage.sync.set(config, () => {
@@ -687,6 +705,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 启用图片嵌入时，自动启用 Advanced URI（必需）
     if (e.target.checked) {
+      const saveImagesLocallyCheckbox = document.getElementById('saveImagesLocally');
+      if (saveImagesLocallyCheckbox.checked) {
+        saveImagesLocallyCheckbox.checked = false;
+        showStatus('已关闭本地图片模式，切换为 Base64 兼容模式', 'info');
+      }
       const advancedUriCheckbox = document.getElementById('useAdvancedUri');
       if (advancedUriCheckbox && !advancedUriCheckbox.checked) {
         advancedUriCheckbox.checked = true;
@@ -696,6 +719,17 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // 移除文件夹路径首尾斜杠
+  document.getElementById('saveImagesLocally').addEventListener('change', (e) => {
+    if (e.target.checked) {
+      const embedImagesCheckbox = document.getElementById('embedImages');
+      if (embedImagesCheckbox.checked) {
+        embedImagesCheckbox.checked = false;
+        updateImageSettingsVisibility(false);
+      }
+      showStatus('已启用本地图片模式；首次保存时会要求选择图片文件夹', 'info');
+    }
+  });
+
   document.getElementById('folderPath').addEventListener('input', (e) => {
     let value = e.target.value.trim();
     value = value.replace(/^\/+|\/+$/g, '');
@@ -703,4 +737,13 @@ document.addEventListener('DOMContentLoaded', () => {
       e.target.value = value;
     }
   });
+
+  document.getElementById('imageFolderPath').addEventListener('input', (e) => {
+    let value = e.target.value.trim();
+    value = value.replace(/^\/+|\/+$/g, '').replace(/\/{2,}/g, '/');
+    if (e.target.value !== value) {
+      e.target.value = value;
+    }
+  });
 });
+

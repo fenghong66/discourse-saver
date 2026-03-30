@@ -51,7 +51,12 @@ const i18n = {
       useUri: '使用 Advanced URI 插件',
       uriHelp: '支持保存大内容（需先在 Obsidian 中安装 Advanced URI 插件）',
       useAdvancedUri: '使用 Advanced URI 插件（支持大内容）',
-      advancedUriHelp: '需先在 Obsidian 中安装 "Advanced URI" 插件'
+      advancedUriHelp: '需先在 Obsidian 中安装 "Advanced URI" 插件',
+      imageFolder: 'Obsidian 图片目录',
+      imageFolderPlaceholder: 'Discourse收集箱/assets',
+      imageFolderHelpDetail: '用于写入 wiki 链接的 vault 相对路径，首次保存时会要求选择本地对应文件夹',
+      saveImagesLocally: '优先保存图片到本地 assets 并改写为 wiki 链接（推荐）',
+      saveImagesLocallyHelp: '适合 Obsidian，正文不会塞入超大 Base64；若未授权目录则回退为保留原图链接'
     },
     feishu: {
       version: 'API 版本',
@@ -134,8 +139,8 @@ const i18n = {
     content: {
       addMetadata: '添加元数据（来源、作者、时间等）',
       keepImages: '保留图片链接',
-      embedImages: '将图片嵌入笔记（Base64）',
-      embedImagesHelp: '图片转为 Base64 嵌入 Markdown，单文件完整保存（需启用 Advanced URI）',
+      embedImages: '将图片嵌入笔记（Base64 兼容模式）',
+      embedImagesHelp: '仅在你确实需要单文件保存时使用；更推荐上方的本地图片模式',
       embedWarning1Title: '注意：',
       embedWarning1Content: '启用后图片会以 Base64 格式嵌入 Markdown 文件中。优点是单文件完整保存，缺点是文件体积会显著增大。',
       embedWarning2Title: '⚠️ 重要：',
@@ -252,7 +257,12 @@ const i18n = {
       useUri: 'Use Advanced URI Plugin',
       uriHelp: 'Support large content save (requires Advanced URI plugin installed in Obsidian)',
       useAdvancedUri: 'Use Advanced URI Plugin (supports large content)',
-      advancedUriHelp: 'Requires "Advanced URI" plugin installed in Obsidian'
+      advancedUriHelp: 'Requires "Advanced URI" plugin installed in Obsidian',
+      imageFolder: 'Obsidian Image Folder',
+      imageFolderPlaceholder: 'Discourse Inbox/assets',
+      imageFolderHelpDetail: 'Vault-relative path used for wiki links; first save will ask you to pick the matching local folder',
+      saveImagesLocally: 'Prefer local assets and rewrite images to wiki links (Recommended)',
+      saveImagesLocallyHelp: 'Best for Obsidian because note content stays small; falls back to original image URLs if folder access is unavailable'
     },
     feishu: {
       version: 'API Version',
@@ -335,8 +345,8 @@ const i18n = {
     content: {
       addMetadata: 'Add metadata (source, author, time, etc.)',
       keepImages: 'Keep image links',
-      embedImages: 'Embed images in notes (Base64)',
-      embedImagesHelp: 'Convert images to Base64 embedded in Markdown, complete single-file save (requires Advanced URI)',
+      embedImages: 'Embed images in notes (Base64 compatibility mode)',
+      embedImagesHelp: 'Use only when you truly need a single-file note; local asset mode above is usually better',
       embedWarning1Title: 'Note:',
       embedWarning1Content: 'Images will be embedded as Base64 in Markdown files. Benefit is complete single-file save, drawback is significantly larger file size.',
       embedWarning2Title: '⚠️ Important:',

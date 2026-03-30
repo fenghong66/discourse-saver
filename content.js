@@ -50,6 +50,8 @@
     useAdvancedUri: true, // V3.4: 默认使用 Advanced URI 插件
 
     // V3.6.0: 图片嵌入设置
+    saveImagesLocally: false,
+    imageFolderPath: 'Discourse收集箱/assets',
     embedImages: false,
     imageMaxWidth: 1920,
     imageQuality: 0.9,
@@ -1316,6 +1318,250 @@
     return processedMarkdown;
   }
 
+  function normalizeVaultPath(input) {
+    return String(input || '')
+      .replace(/\\/g, '/')
+      .replace(/^\/+|\/+$/g, '')
+      .replace(/\/{2,}/g, '/');
+  }
+
+  function inferImageExtension(mimeType, sourceUrl) {
+    const mime = String(mimeType || '').toLowerCase();
+    if (mime.startsWith('image/')) {
+      return mime.split('/')[1].replace('jpeg', 'jpg');
+    }
+
+    const cleanUrl = String(sourceUrl || '').split('?')[0];
+    const match = cleanUrl.match(/\.([a-z0-9]+)$/i);
+    if (!match) {
+      throw new Error(`无法推断图片扩展名: ${sourceUrl}`);
+    }
+
+    return match[1].toLowerCase().replace('jpeg', 'jpg');
+  }
+
+  function buildImageFileName(title, index, extension) {
+    return `${sanitizeFileName(title)}-${index}.${extension}`;
+  }
+
+  function collectMarkdownImages(markdown) {
+    const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
+    return [...String(markdown || '').matchAll(imageRegex)].map((match, index) => ({
+      alt: match[1],
+      url: match[2],
+      index: index + 1,
+      originalMarkdown: match[0]
+    }));
+  }
+
+  function rewriteMarkdownImagesToWikiLinks(markdown, assets) {
+    let output = markdown;
+    for (const asset of assets) {
+      output = output.replace(asset.originalMarkdown, `![[${asset.wikiPath}]]`);
+    }
+    return output;
+  }
+
+  async function dataUrlToBlob(dataUrl) {
+    const response = await fetch(dataUrl);
+    if (!response.ok) {
+      throw new Error('Data URL 读取失败');
+    }
+    return response.blob();
+  }
+
+  async function fetchImageBlob(url, maxSize = IMAGE_LIMITS.MAX_SINGLE_SIZE) {
+    const blob = String(url || '').startsWith('data:')
+      ? await dataUrlToBlob(url)
+      : await (async () => {
+          const response = await fetch(url, {
+            mode: 'cors',
+            credentials: 'omit'
+          });
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+          return response.blob();
+        })();
+
+    if (blob.size > maxSize) {
+      throw new Error(`图片过大 (${(blob.size / 1024 / 1024).toFixed(1)}MB)`);
+    }
+
+    return blob;
+  }
+
+  const LocalAssetModule = (function() {
+    const DB_NAME = 'discourse-saver-local-assets';
+    const STORE_NAME = 'handles';
+    const HANDLE_KEY = 'obsidian-image-folder';
+
+    function supportsDirectoryPicker() {
+      return typeof window.showDirectoryPicker === 'function';
+    }
+
+    function openDatabase() {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, 1);
+
+        request.onupgradeneeded = () => {
+          const database = request.result;
+          if (!database.objectStoreNames.contains(STORE_NAME)) {
+            database.createObjectStore(STORE_NAME);
+          }
+        };
+
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error || new Error('IndexedDB 打开失败'));
+      });
+    }
+
+    async function withStore(mode, callback) {
+      const database = await openDatabase();
+      return new Promise((resolve, reject) => {
+        const transaction = database.transaction(STORE_NAME, mode);
+        const store = transaction.objectStore(STORE_NAME);
+        const request = callback(store);
+
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error || new Error('IndexedDB 操作失败'));
+        transaction.onerror = () => reject(transaction.error || new Error('IndexedDB 事务失败'));
+      });
+    }
+
+    function saveDirectoryHandle(handle) {
+      return withStore('readwrite', (store) => store.put(handle, HANDLE_KEY));
+    }
+
+    async function getDirectoryHandle() {
+      const result = await withStore('readonly', (store) => store.get(HANDLE_KEY));
+      return result || null;
+    }
+
+    async function requestDirectoryHandle() {
+      if (!supportsDirectoryPicker()) {
+        throw new Error('当前浏览器不支持目录授权');
+      }
+
+      const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      await saveDirectoryHandle(handle);
+      return handle;
+    }
+
+    async function ensureDirectoryPermission(handle) {
+      if (!handle) {
+        return requestDirectoryHandle();
+      }
+
+      const options = { mode: 'readwrite' };
+      if (await handle.queryPermission(options) === 'granted') {
+        return handle;
+      }
+
+      if (await handle.requestPermission(options) === 'granted') {
+        return handle;
+      }
+
+      throw new Error('本地图片目录未授予写入权限');
+    }
+
+    async function getReadyDirectoryHandle() {
+      const handle = await getDirectoryHandle();
+      return ensureDirectoryPermission(handle);
+    }
+
+    async function writeFile(fileName, blob) {
+      const handle = await getReadyDirectoryHandle();
+      const fileHandle = await handle.getFileHandle(fileName, { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+    }
+
+    return {
+      supportsDirectoryPicker,
+      getReadyDirectoryHandle,
+      writeFile
+    };
+  })();
+
+  async function exportImagesToLocalFolder(markdown, fileName, config) {
+    const imageFolderPath = normalizeVaultPath(
+      config.imageFolderPath || `${config.folderPath || 'Discourse收集箱'}/assets`
+    );
+    const images = collectMarkdownImages(markdown).filter((image) => image.url);
+    if (images.length === 0) {
+      return { markdown, savedCount: 0, failed: [] };
+    }
+
+    await LocalAssetModule.getReadyDirectoryHandle();
+
+    const assets = [];
+    const failed = [];
+    for (const image of images) {
+      try {
+        const blob = await fetchImageBlob(image.url);
+        const extension = inferImageExtension(blob.type, image.url);
+        const assetFileName = buildImageFileName(fileName, image.index, extension);
+        await LocalAssetModule.writeFile(assetFileName, blob);
+        assets.push({
+          ...image,
+          wikiPath: `${imageFolderPath}/${assetFileName}`
+        });
+      } catch (error) {
+        console.warn('[Discourse Saver] 本地图片导出失败:', image.url, error.message);
+        failed.push({ url: image.url, error: error.message });
+      }
+    }
+
+    return {
+      markdown: rewriteMarkdownImagesToWikiLinks(markdown, assets),
+      savedCount: assets.length,
+      failed
+    };
+  }
+
+  async function prepareObsidianMarkdown(markdown, fileName, config) {
+    if (!config.includeImages) {
+      return { markdown, assetResult: null };
+    }
+
+    if (config.saveImagesLocally) {
+      if (!LocalAssetModule.supportsDirectoryPicker()) {
+        console.warn('[Discourse Saver] 当前浏览器不支持本地图片目录授权，保留原图链接');
+        showNotification('当前浏览器不支持本地图片目录授权，已保留原图链接', 'warning', 4000);
+        return { markdown, assetResult: null };
+      }
+
+      try {
+        showNotification('请选择 Obsidian vault 中对应的图片文件夹', 'info', 4000);
+        const assetResult = await exportImagesToLocalFolder(markdown, fileName, config);
+        return {
+          markdown: assetResult.markdown,
+          assetResult
+        };
+      } catch (error) {
+        console.warn('[Discourse Saver] Obsidian 图片改写失败，保留原图链接:', error);
+        showNotification('图片未改写为本地附件，已保留原图链接', 'warning', 4000);
+        return {
+          markdown,
+          assetResult: null
+        };
+      }
+    }
+
+    if (config.embedImages) {
+      showNotification('正在处理图片嵌入...', 'info');
+      const embeddedMarkdown = await processMarkdownImages(markdown, config);
+      return {
+        markdown: embeddedMarkdown,
+        assetResult: null
+      };
+    }
+
+    return { markdown, assetResult: null };
+  }
+
   // V3: HTML转Markdown（带评论版本）
   function convertToMarkdownWithComments(contentHTML, metadata, comments, config) {
     const turndownService = createTurndownService();
@@ -1494,12 +1740,6 @@
         effectiveConfig
       );
 
-      // V3.6.0: 处理图片嵌入（Base64）
-      if (config.embedImages) {
-        showNotification('正在处理图片嵌入...', 'info');
-        markdown = await processMarkdownImages(markdown, config);
-      }
-
       // 构建文件名：只用标题
       // V3.5.3: 单条评论模式时添加楼层号后缀
       const sanitizedTitle = title
@@ -1512,6 +1752,16 @@
       const fileName = isSingleCommentMode
         ? `${sanitizedTitle}-${targetPostNumber}楼`
         : sanitizedTitle;
+
+      const prepared = await prepareObsidianMarkdown(markdown, fileName, config);
+      markdown = prepared.markdown;
+      if (prepared.assetResult?.failed.length) {
+        showNotification(
+          `图片成功保存 ${prepared.assetResult.savedCount} 张，失败 ${prepared.assetResult.failed.length} 张，失败项保留原链接`,
+          'warning',
+          4500
+        );
+      }
 
       // 构建Obsidian URI
       const filePath = config.folderPath ? `${config.folderPath}/${fileName}` : fileName;

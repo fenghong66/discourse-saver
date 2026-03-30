@@ -1,4 +1,4 @@
-# Discourse Saver - 更新说明
+﻿# Discourse Saver - 更新说明
 
 ## 版本信息
 
@@ -15,6 +15,28 @@
 
 ---
 
+## 2026-03-30 补充更新
+
+### Obsidian 图片导出修复
+
+- **本地 assets 模式接回扩展版** - 浏览器扩展版 content.js 现已支持将 Markdown 图片保存到本地文件夹，并改写为 Obsidian wiki 链接
+- **避免 Base64 过大卡顿** - 不再默认把图片内容直接塞进 Obsidian URI，减少大笔记导入时的卡顿和卡死风险
+- **失败安全回退** - 若本地目录未授权、浏览器不支持目录授权或图片保存失败，则保留原图 URL，不会再强制膨胀为超大 Base64
+
+### 设置页同步补齐
+
+- **新增 Obsidian 图片目录设置** - 可配置 vault 内的图片目标路径，例如 Discourse收集箱/assets
+- **新增本地图片模式开关** - 可显式启用“优先保存图片到本地 assets 并改写为 wiki 链接”
+- **Base64 文案改为兼容模式** - 设置页已明确区分“推荐的本地图片模式”和“仅在必要时使用的 Base64 兼容模式”
+- **配置互斥处理** - 开启本地图片模式时会自动关闭 Base64 兼容模式，反之亦然，避免两个模式同时生效造成歧义
+
+### 测试与验证
+
+- **补充图片解析测试** - 新增 collectMarkdownImages 的定向覆盖，确保图片序号、原始 Markdown 和 URL 提取稳定
+- **扩展设置脚本校验通过** - options.js 与 content.js 已完成语法检查
+- **现有辅助测试继续通过** - tests/obsidian-assets.test.js 全部通过
+
+---
 ## V4.3.5 主要变更 (2026-03-15)
 
 ### HTML 导出增强
@@ -396,3 +418,4 @@
 
 - GitHub: https://github.com/AchengBusiness/discourse-saver
 - Issues: https://github.com/AchengBusiness/discourse-saver/issues
+
