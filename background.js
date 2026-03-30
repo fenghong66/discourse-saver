@@ -423,6 +423,43 @@ function parseHttpError(status, context, responseText) {
   return `${context}失败：HTTP ${status}\n响应内容：${responseText.substring(0, 100)}`;
 }
 
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = '';
+
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
+}
+
+async function fetchImageAsDataUrl(url, maxSize = 15 * 1024 * 1024) {
+  const response = await fetch(url, {
+    credentials: 'omit'
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  if (blob.size > maxSize) {
+    throw new Error(`图片过大 (${(blob.size / 1024 / 1024).toFixed(1)}MB)`);
+  }
+
+  const mimeType = blob.type || 'application/octet-stream';
+  const base64 = arrayBufferToBase64(await blob.arrayBuffer());
+
+  return {
+    dataUrl: `data:${mimeType};base64,${base64}`,
+    size: blob.size,
+    mimeType
+  };
+}
+
 // 安全解析 JSON 响应（增强版）
 async function safeParseJson(response, context) {
   const text = await response.text();
@@ -2346,6 +2383,20 @@ async function testNotionConnection(config) {
 
 // 监听来自content script的消息
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'fetchImageDataUrl') {
+    (async () => {
+      try {
+        const result = await fetchImageAsDataUrl(request.url, request.maxSize);
+        sendResponse({ success: true, ...result });
+      } catch (error) {
+        console.error('[Discourse Saver] 后台抓取图片失败:', request.url, error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+
+    return true;
+  }
+
   // V4.3.6: 处理 HTML 文件下载请求
   if (request.action === 'downloadHtml') {
     (async () => {

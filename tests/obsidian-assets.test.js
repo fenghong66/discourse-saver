@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const {
   normalizeVaultPath,
   buildImageFileName,
+  splitVaultPathSegments,
+  resolveAssetDirectorySegments,
   inferImageExtension,
   collectMarkdownImages,
   rewriteMarkdownImagesToWikiLinks,
@@ -30,6 +32,28 @@ runTest('buildImageFileName uses post title and sequence number', () => {
 
 runTest('buildImageFileName strips invalid path characters', () => {
   assert.equal(buildImageFileName('A:/B?', 1, 'png'), 'AB-1.png');
+});
+
+runTest('splitVaultPathSegments keeps clean vault path segments', () => {
+  assert.deepEqual(
+    splitVaultPathSegments('/Discourse收集箱/assets/sub/'),
+    ['Discourse收集箱', 'assets', 'sub']
+  );
+});
+
+runTest('resolveAssetDirectorySegments adapts to selected root folder', () => {
+  assert.deepEqual(
+    resolveAssetDirectorySegments('Discourse收集箱/assets', 'assets'),
+    []
+  );
+  assert.deepEqual(
+    resolveAssetDirectorySegments('Discourse收集箱/assets', 'Discourse收集箱'),
+    ['assets']
+  );
+  assert.deepEqual(
+    resolveAssetDirectorySegments('Discourse收集箱/assets', 'MyVault'),
+    ['Discourse收集箱', 'assets']
+  );
 });
 
 runTest('inferImageExtension prefers mime type and falls back to url suffix', () => {

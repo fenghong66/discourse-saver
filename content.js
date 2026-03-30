@@ -86,6 +86,12 @@
     htmlExportFolder: 'Discourse导出'  // V4.3.6: HTML 导出文件夹
   };
 
+  const IMAGE_LIMITS = {
+    MAX_SINGLE_SIZE: 15 * 1024 * 1024,
+    MAX_TOTAL_SIZE: 100 * 1024 * 1024,
+    MAX_IMAGE_COUNT: 50
+  };
+
   // V4.2.3: Notion 属性的语言相关默认值
   const NOTION_PROP_DEFAULTS = {
     zh: {
@@ -124,6 +130,81 @@
         }
       });
     });
+  }
+
+  let runtimeConfigCache = { ...DEFAULT_CONFIG };
+  let runtimeConfigCacheReady = false;
+  let pendingLocalAssetPrimePromise = null;
+  let runtimeConfigWatcherAdded = false;
+
+  async function refreshRuntimeConfigCache() {
+    try {
+      runtimeConfigCache = await chrome.storage.sync.get(DEFAULT_CONFIG);
+      runtimeConfigCacheReady = true;
+    } catch (error) {
+      console.warn('[Discourse Saver] 刷新配置缓存失败:', error);
+    }
+  }
+
+  function watchRuntimeConfigCache() {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== 'sync') {
+        return;
+      }
+
+      for (const [key, change] of Object.entries(changes)) {
+        if (Object.prototype.hasOwnProperty.call(DEFAULT_CONFIG, key)) {
+          runtimeConfigCache[key] = change.newValue;
+        }
+      }
+
+      runtimeConfigCacheReady = true;
+    });
+  }
+
+  async function initRuntimeConfigCache() {
+    await refreshRuntimeConfigCache();
+    if (!runtimeConfigWatcherAdded) {
+      watchRuntimeConfigCache();
+      runtimeConfigWatcherAdded = true;
+    }
+  }
+
+  function shouldPrepareLocalAssets(config) {
+    return !!(
+      config &&
+      config.pluginEnabled !== false &&
+      config.saveToObsidian !== false &&
+      config.includeImages &&
+      config.saveImagesLocally
+    );
+  }
+
+  function primeLocalAssetAccessFromUserGesture() {
+    if (!runtimeConfigCacheReady || !shouldPrepareLocalAssets(runtimeConfigCache)) {
+      return;
+    }
+
+    if (pendingLocalAssetPrimePromise) {
+      return;
+    }
+
+    pendingLocalAssetPrimePromise = LocalAssetModule.primeDirectoryHandleFromUserGesture()
+      .catch((error) => {
+        console.warn('[Discourse Saver] 本地图片目录预授权失败:', error?.message || error);
+        return null;
+      })
+      .finally(() => {
+        pendingLocalAssetPrimePromise = null;
+      });
+  }
+
+  async function waitForPrimedLocalAssetAccess(config) {
+    if (!shouldPrepareLocalAssets(config) || !pendingLocalAssetPrimePromise) {
+      return;
+    }
+
+    await pendingLocalAssetPrimePromise;
   }
 
   // 检查是否在帖子页面
@@ -271,6 +352,7 @@
           lastLinkPostNumber = null;
           triggerOriginalCopyLink(target);
         } else {
+          primeLocalAssetAccessFromUserGesture();
           // 等待300ms判断是否为双击
           const postNumber = linkResult.postNumber;
           linkClickTimer = setTimeout(() => {
@@ -1344,6 +1426,29 @@
     return `${sanitizeFileName(title)}-${index}.${extension}`;
   }
 
+  function splitVaultPathSegments(input) {
+    const normalizedPath = normalizeVaultPath(input);
+    return normalizedPath ? normalizedPath.split('/').filter(Boolean) : [];
+  }
+
+  function resolveAssetDirectorySegments(imageFolderPath, rootHandleName) {
+    const segments = splitVaultPathSegments(imageFolderPath);
+    if (segments.length === 0) {
+      return [];
+    }
+
+    const lastSegment = segments[segments.length - 1];
+    if (rootHandleName === lastSegment) {
+      return [];
+    }
+
+    if (rootHandleName === segments[0]) {
+      return segments.slice(1);
+    }
+
+    return segments;
+  }
+
   function collectMarkdownImages(markdown) {
     const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
     return [...String(markdown || '').matchAll(imageRegex)].map((match, index) => ({
@@ -1370,18 +1475,37 @@
     return response.blob();
   }
 
+  async function fetchImageBlobViaBackground(url, maxSize) {
+    const response = await sendMessageAsync({
+      action: 'fetchImageDataUrl',
+      url,
+      maxSize
+    });
+
+    if (!response?.success || !response.dataUrl) {
+      throw new Error(response?.error || '后台图片抓取失败');
+    }
+
+    return dataUrlToBlob(response.dataUrl);
+  }
+
   async function fetchImageBlob(url, maxSize = IMAGE_LIMITS.MAX_SINGLE_SIZE) {
     const blob = String(url || '').startsWith('data:')
       ? await dataUrlToBlob(url)
       : await (async () => {
-          const response = await fetch(url, {
-            mode: 'cors',
-            credentials: 'omit'
-          });
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
+          try {
+            const response = await fetch(url, {
+              mode: 'cors',
+              credentials: 'omit'
+            });
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}`);
+            }
+            return await response.blob();
+          } catch (error) {
+            console.warn('[Discourse Saver] 内容脚本抓图失败，尝试后台兜底:', url, error?.message || error);
+            return fetchImageBlobViaBackground(url, maxSize);
           }
-          return response.blob();
         })();
 
     if (blob.size > maxSize) {
@@ -1470,8 +1594,36 @@
       return ensureDirectoryPermission(handle);
     }
 
-    async function writeFile(fileName, blob) {
-      const handle = await getReadyDirectoryHandle();
+    async function primeDirectoryHandleFromUserGesture() {
+      if (!supportsDirectoryPicker()) {
+        return null;
+      }
+
+      const savedHandle = await getDirectoryHandle();
+      if (savedHandle) {
+        try {
+          return await ensureDirectoryPermission(savedHandle);
+        } catch (error) {
+          console.warn('[Discourse Saver] 已保存目录不可用，准备重新选择:', error?.message || error);
+        }
+      }
+
+      return requestDirectoryHandle();
+    }
+
+    async function getReadyAssetDirectoryHandle(imageFolderPath) {
+      let currentHandle = await getReadyDirectoryHandle();
+      const relativeSegments = resolveAssetDirectorySegments(imageFolderPath, currentHandle.name);
+
+      for (const segment of relativeSegments) {
+        currentHandle = await currentHandle.getDirectoryHandle(segment, { create: true });
+      }
+
+      return currentHandle;
+    }
+
+    async function writeFile(fileName, blob, directoryHandle = null) {
+      const handle = directoryHandle || await getReadyDirectoryHandle();
       const fileHandle = await handle.getFileHandle(fileName, { create: true });
       const writable = await fileHandle.createWritable();
       await writable.write(blob);
@@ -1480,7 +1632,9 @@
 
     return {
       supportsDirectoryPicker,
+      primeDirectoryHandleFromUserGesture,
       getReadyDirectoryHandle,
+      getReadyAssetDirectoryHandle,
       writeFile
     };
   })();
@@ -1494,7 +1648,7 @@
       return { markdown, savedCount: 0, failed: [] };
     }
 
-    await LocalAssetModule.getReadyDirectoryHandle();
+    const assetDirectoryHandle = await LocalAssetModule.getReadyAssetDirectoryHandle(imageFolderPath);
 
     const assets = [];
     const failed = [];
@@ -1503,7 +1657,7 @@
         const blob = await fetchImageBlob(image.url);
         const extension = inferImageExtension(blob.type, image.url);
         const assetFileName = buildImageFileName(fileName, image.index, extension);
-        await LocalAssetModule.writeFile(assetFileName, blob);
+        await LocalAssetModule.writeFile(assetFileName, blob, assetDirectoryHandle);
         assets.push({
           ...image,
           wikiPath: `${imageFolderPath}/${assetFileName}`
@@ -1753,6 +1907,7 @@
         ? `${sanitizedTitle}-${targetPostNumber}楼`
         : sanitizedTitle;
 
+      await waitForPrimedLocalAssetAccess(config);
       const prepared = await prepareObsidianMarkdown(markdown, fileName, config);
       markdown = prepared.markdown;
       if (prepared.assetResult?.failed.length) {
@@ -3746,6 +3901,7 @@
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'S') {
         e.preventDefault();
         console.log('[Discourse Saver] 快捷键触发');
+        primeLocalAssetAccessFromUserGesture();
         saveToObsidian();
       }
     });
@@ -3757,6 +3913,8 @@
 
   // 初始化
   async function init() {
+    await initRuntimeConfigCache();
+
     // 检查插件是否启用
     const config = await chrome.storage.sync.get({ pluginEnabled: true });
     if (!config.pluginEnabled) {

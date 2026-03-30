@@ -34,6 +34,29 @@ function buildImageFileName(title, index, extension) {
   return `${sanitizeFilePart(title)}-${index}.${extension}`;
 }
 
+function splitVaultPathSegments(input) {
+  const normalizedPath = normalizeVaultPath(input);
+  return normalizedPath ? normalizedPath.split('/').filter(Boolean) : [];
+}
+
+function resolveAssetDirectorySegments(imageFolderPath, rootHandleName) {
+  const segments = splitVaultPathSegments(imageFolderPath);
+  if (segments.length === 0) {
+    return [];
+  }
+
+  const lastSegment = segments[segments.length - 1];
+  if (rootHandleName === lastSegment) {
+    return [];
+  }
+
+  if (rootHandleName === segments[0]) {
+    return segments.slice(1);
+  }
+
+  return segments;
+}
+
 function collectMarkdownImages(markdown) {
   const imageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g;
   return [...String(markdown || '').matchAll(imageRegex)].map((match, index) => ({
@@ -63,6 +86,8 @@ function buildNoteFolderPreview(folderPath, title) {
 module.exports = {
   normalizeVaultPath,
   buildImageFileName,
+  splitVaultPathSegments,
+  resolveAssetDirectorySegments,
   inferImageExtension,
   collectMarkdownImages,
   rewriteMarkdownImagesToWikiLinks,
